@@ -1,0 +1,20 @@
+{
+  "mode": "dry_run",
+  "exclusive_polling_confirmed": false,
+  "credentials_source": ".telegram-credentials.py",
+  "victim_ip": "192.168.64.6",
+  "allowed_attacker_ips": [
+    "192.168.64.4",
+    "192.168.64.8"
+  ],
+  "protected_ips": [
+    "192.168.64.1",
+    "192.168.64.6"
+  ],
+  "destination_port": 22,
+  "duration_seconds": 60,
+  "approval_ttl_seconds": 600,
+  "live_enabled_after": null,
+  "assessment_version": "gemma_judgment_v2",
+  "review_notifications_enabled_after": null
+}

@@ -1,0 +1,14 @@
+{
+  "ssh_target": "victim@192.168.64.6",
+  "log_path": "/var/log/suricata/eve.json",
+  "start_at": "end",
+  "signature_ids": [
+    9001001
+  ],
+  "poll_seconds": 5,
+  "source_ips": [
+    "192.168.64.4",
+    "192.168.64.8"
+  ],
+  "destination_ip": "192.168.64.6"
+}

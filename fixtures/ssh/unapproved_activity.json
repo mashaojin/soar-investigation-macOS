@@ -1,0 +1,39 @@
+{
+  "id": "unapproved_activity",
+  "kind": "synthetic_fixture",
+  "incident": {
+    "id": "unapproved_activity",
+    "source_ip": "192.0.2.30",
+    "target_ip": "192.0.2.10",
+    "target_port": 22,
+    "start": "2026-10-26T18:10:00Z",
+    "end": "2026-10-26T18:10:40Z",
+    "signature_id": 9001001,
+    "alert_count": 1,
+    "interpretation": "SSH connection threshold; does not itself prove password failure or compromise."
+  },
+  "plan": null,
+  "authentication": {
+    "evidence_id": "unapproved_activity-auth",
+    "source_ip": "192.0.2.30",
+    "target_ip": "192.0.2.10",
+    "start": "2026-10-26T18:10:00Z",
+    "end": "2026-10-26T18:10:40Z",
+    "coverage": "complete_for_fixture",
+    "failed_password_count": 16,
+    "failed_accounts": {
+      "root": 8,
+      "admin": 8
+    },
+    "successful_login_count": 0
+  },
+  "expected": {
+    "disposition": "SUSPICIOUS",
+    "delivery": "human_review",
+    "must_not_claim": [
+      "confirmed compromise",
+      "firewall action executed"
+    ],
+    "required_observation": "Repeated failures against root/admin without a matching approved plan."
+  }
+}

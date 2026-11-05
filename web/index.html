@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>SOAR investigation dashboard</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script><script src="/experiments.js" defer></script></head>
+<body>
+<header class="app-header"><div class="brand"><span class="mark" aria-hidden="true">S</span><div><h1>SOAR investigation dashboard</h1><p>Python-orchestrated · Gemma assessment · human decision</p></div></div><div class="header-actions"><span class="mode-tag" id="response-mode">Checking response mode…</span><button id="experiments-button">Settings</button><button id="plans-button">Plans <span id="plan-count">(0)</span></button><button id="new-plan" class="primary">New test plan</button></div></header>
+<main>
+<div class="activity-line"><p id="history-summary">Loading incident history…</p><div><span id="connection">Connecting to dashboard…</span><button id="refresh" class="subtle" aria-label="Refresh saved dashboard state">Refresh</button></div></div>
+<section class="service-strip" aria-label="Continuous monitoring status"><div><strong id="service-label" role="status">Checking monitor heartbeat…</strong><span id="service-detail" class="muted small"></span></div><progress id="service-progress" aria-label="Continuous monitoring" hidden></progress></section>
+<p id="state-note" class="muted status-note"></p>
+<div class="investigation-grid">
+<aside class="history-column panel"><details id="history-panel" open><summary><span>Incident history</span><span id="incident-count" class="count"></span></summary><p class="muted small">AI verdict and investigation status · newest first</p><nav id="incidents" aria-label="Select an incident"></nav></details></aside>
+<article class="investigation panel"><div id="empty" class="empty"><h2>No incident selected</h2><p>Choose an incident from the history, or create a test plan and run an SSH test manually.</p></div>
+<div id="detail" hidden>
+<div class="selected-header"><div><p class="eyebrow">Selected incident</p><h2 id="title"></h2></div><span id="verdict" class="badge" aria-label="AI verdict"></span></div>
+<div class="incident-meta"><span id="incident-time"></span><span id="incident-id"></span></div>
+<div class="investigation-status"><strong id="investigation-status"></strong><p id="status-detail"></p><p id="waiting-deadline" class="deadline" hidden></p></div>
+<ol class="stages" id="stages" aria-label="Investigation progress"></ol>
+<div class="progress-card"><div class="progress-heading"><strong>Incident stages</strong><span id="stage-progress-label"></span></div><progress id="stage-progress" max="5" value="0" aria-label="Completed incident stages"></progress><p class="muted small">Stage completion, not an estimate of processing time.</p><div id="phase-box"><div class="progress-heading"><span id="phase-label"></span><span id="phase-time"></span></div><progress id="phase-progress" aria-label="Current incident phase"></progress></div></div>
+<section id="human-review-panel" class="human-review-panel" hidden aria-labelledby="human-review-title">
+<div class="section-heading"><h3 id="human-review-title">Human review</h3><span id="human-review-status" class="badge review"></span></div>
+<p id="human-review-scope" class="muted small"></p><p class="muted small">Record your conclusion after inspecting the evidence. The original AI assessment is retained. Saving this review does not approve a firewall block or launch more evidence collection.</p>
+<div class="formactions"><button type="button" id="open-followup-review" hidden>Add follow-up review</button><button type="button" id="notify-human-review">Send Telegram review notice</button></div><p id="human-review-notification" class="muted small"></p>
+<form id="human-review-form"><div class="formgrid"><label for="review-reviewer">Reviewer name<input id="review-reviewer" maxlength="80" required autocomplete="name" placeholder="Your name"></label><label for="review-conclusion">Your conclusion<select id="review-conclusion" required><option value="">Choose a conclusion</option><option value="BENIGN">Benign / authorized activity</option><option value="SUSPICIOUS">Suspicious / unauthorized activity</option><option value="NEEDS_MORE_EVIDENCE">Need more evidence — keep open</option></select></label></div><label class="editor-label" for="review-notes">Review notes (optional)<textarea id="review-notes" rows="4" placeholder="What evidence did you check, and why did you reach this conclusion?"></textarea></label><div class="formactions"><button id="save-human-review" type="submit" class="primary">Save human review</button></div></form>
+<p id="human-review-message" role="status" aria-live="polite"></p><details id="human-review-history"><summary>Review history</summary><div id="human-review-history-list"></div></details>
+</section>
+<section class="assessment"><div class="section-heading"><h3>AI security judgment</h3><span class="muted small" id="model-name"></span></div><p id="reason" class="assessment-reason"></p><ul id="recommendations"></ul><p class="muted small" id="limits"></p></section>
+<section class="evidence-section"><div class="section-heading"><h3>Observed facts</h3><span class="muted small" id="tool-count"></span></div><p class="muted small">Scoped collected evidence with source, time window and coverage limits. Suricata connection alerts alone do not prove failed passwords or compromise.</p><div id="tools"></div></section>
+<section class="evidence-section"><h3>Python scope comparisons</h3><p class="muted small">Recorded authorization, account and attempt-limit comparisons. Gemma makes the security judgment; Python checks the facts.</p><div id="policy-findings"></div></section><div id="incident-technical"></div>
+</div></article>
+<aside class="context-column" aria-label="Selected incident context">
+<section class="panel context-card"><p class="eyebrow">Selected incident</p><h2>Authorization context</h2><div id="authorization"></div></section>
+<section class="panel context-card"><h2>Telegram and response</h2><div id="response-context"></div><p class="muted small">Test-plan approval is separate from response approval. Eligible response decisions happen in Telegram.</p></section>
+<section class="panel context-card next-plan-card"><p class="eyebrow">Plan management</p><h2>Next test plan</h2><div id="next-plan"></div></section>
+</aside>
+</div>
+<footer>Python coordinates collection and policy checks · Gemma interprets bounded evidence directly through Ollama · Monitor health comes from a live heartbeat · Incident progress comes from recorded stages</footer>
+</main>
+<dialog id="plan-drawer" aria-labelledby="drawer-title"><div class="drawer-heading"><div><p class="eyebrow">Plan management</p><h2 id="drawer-title">Test plans</h2></div><button id="close-plans" class="subtle" aria-label="Close plans">Close</button></div><div class="drawer-content">
+<p class="muted">Define the test scope, validate it, then explicitly approve its saved dashboard version. Run the test manually.</p>
+<div class="drawer-toolbar"><button id="drawer-new-plan" class="primary">New test plan</button><span id="drawer-plan-count" class="muted small"></span></div>
+<div id="editor" hidden><h3 id="editor-title">New test plan</h3>
+<form id="plan-form"><div class="formgrid">
+<label>Operator name<input id="plan-owner" name="owner" maxlength="80" required autocomplete="name" placeholder="Your name"></label>
+<label>Source IP<input id="plan-source" name="source_ip" list="lab-sources" required placeholder="192.168.64.8"><datalist id="lab-sources"></datalist></label>
+<label>Target IP<input id="plan-target" name="target_ip" required placeholder="192.168.64.6"><small>SSH on TCP port 22</small></label>
+<label>Permitted accounts<input id="plan-accounts" name="allowed_accounts" required value="soc_test" maxlength="520"><small>Separate names with commas</small></label>
+<label>Failed-attempt limit<input id="plan-limit" name="maximum_failed_attempts" type="number" min="1" max="100" step="1" value="10" required><small>Total across the entire window</small></label>
+<label>Start time<input id="plan-start" name="start" type="datetime-local" step="60" required></label>
+<label>End time<input id="plan-end" name="end" type="datetime-local" step="60" required><small>A window of 1–10 minutes</small></label>
+</div><p class="muted small" id="time-zone"></p><div class="formactions"><button type="button" id="fresh-times">Use fresh times</button><button type="submit" id="validate-plan" class="primary">Validate</button><button type="button" id="cancel-plan" class="subtle">Cancel draft</button></div></form>
+<div id="plan-review" class="review" hidden><h3>Review the validated scope</h3><dl id="review-fields"></dl><p class="small">Approval is limited to this exact source, target, accounts and window. Successful login is not authorized.</p><div class="formactions"><button id="approve-plan" class="primary">Approve plan</button></div></div>
+</div>
+<p id="plan-message" role="status" aria-live="polite"></p><div id="plan-success" class="approval-success" hidden></div>
+<section id="instructions-panel" hidden></section>
+<details id="plan-history" class="plan-history"><summary>Plan history <span id="plan-history-count"></span></summary><p class="muted small">Approved versions are retained. Repeat creates a separate plan with fresh times.</p><div id="plans"></div></details>
+<p id="plan-error" class="error" hidden></p>
+</div></dialog>
+<dialog id="experiment-drawer" aria-labelledby="experiment-title">
+<div class="drawer-heading"><div><p class="eyebrow">Controlled experiments</p><h2 id="experiment-title">Rules, prompts and evidence</h2></div><button id="close-experiments">Close</button></div>
+<div class="drawer-content"><p class="muted">Rules decide what alerts. Python decides what evidence is supplied. Gemma interprets that evidence. Change one variable at a time.</p>
+<div class="experiment-tabs" role="tablist" aria-label="Experiment panels"><button role="tab" aria-selected="true" id="tab-prompt">Gemma prompt</button><button role="tab" aria-selected="false" id="tab-rules">Suricata rule</button><button role="tab" aria-selected="false" id="tab-python">Pipeline configuration</button></div>
+<p id="experiment-message" role="status" aria-live="polite"></p>
+<section id="pane-prompt" role="tabpanel" aria-labelledby="tab-prompt">
+<h3>Versioned instruction</h3><p id="active-prompt" class="muted small"></p>
+<label class="editor-label" for="prompt-version">Saved version<select id="prompt-version"></select></label>
+<div class="formactions"><button id="load-prompt">Load selected version</button><button id="default-prompt">Load default draft</button><button id="activate-prompt" class="primary">Activate selected version</button></div>
+<p class="muted small">Activation affects new live assessments. Historical and in-flight requests retain their original instruction. Schema, fact checks and response approval remain enforced by Python.</p>
+<label class="editor-label">Instruction<textarea id="prompt-text" rows="18" spellcheck="false"></textarea></label>
+<label class="editor-label">Version label<input id="prompt-label" maxlength="80" placeholder="Describe the change"></label>
+<div class="formactions"><button id="save-prompt" class="primary">Save and validate version</button><span id="prompt-size" class="muted small"></span></div>
+<hr><h3>Compare on saved evidence</h3><p class="muted small">Runs two fresh requests: the incident’s original instruction and the selected saved version, using identical saved evidence and model options. No log collection, Telegram messages or firewall actions. Requests share the model queue with live analysis.</p>
+<label class="editor-label" for="comparison-incident">Saved SSH incident<select id="comparison-incident"></select></label>
+<div class="formactions"><button id="compare-prompts" class="primary">Compare original vs selected prompt</button></div><div id="comparison-results" aria-live="polite"></div>
+</section>
+<section id="pane-rules" role="tabpanel" aria-labelledby="tab-rules" hidden>
+<h3>Victim SSH rule</h3><p class="muted small">Fixed file: /etc/suricata/rules/ssh_bruteforce.rules on 192.168.64.6. Edit the message, threshold count/seconds and revision. This editor preserves TCP/22, SYN matching and SID 9001001.</p>
+<div class="formactions"><button id="read-rule">Read current rule from Victim</button></div><p id="rule-status" class="muted small">Victim status has not been checked in this session.</p>
+<label class="editor-label">Rule draft<textarea id="rule-text" rows="7" spellcheck="false" placeholder="Read the current rule first"></textarea></label>
+<div class="formactions"><button id="validate-rule">Validate on Victim</button><button id="apply-rule" class="primary" disabled>Apply validated rule and reload</button><button id="restore-rule" disabled>Restore previous rule and reload</button></div>
+<p class="muted small">Validation tests a candidate configuration without changing the active file. Apply writes the fixed file, tests the full configuration and waits for Suricata’s blocking reload. A backup is restored if activation fails. Read status before retrying any uncertain operation.</p><pre id="rule-review" hidden></pre>
+</section>
+<section id="pane-python" role="tabpanel" aria-labelledby="tab-python" hidden><h3>Pipeline configuration</h3><p class="muted">Read only · Key settings that control the evidence Gemma receives and the size of its response.</p><div id="python-settings"></div><h3>Model and token limits</h3><div id="model-settings"></div><p class="muted small">Saved-evidence comparisons change the instruction only. They cannot test a new Suricata rule against traffic that was never captured. Use a fresh manual rehearsal for rule changes.</p></section>
+</div></dialog>
+</body></html>

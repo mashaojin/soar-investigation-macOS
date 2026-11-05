@@ -1,0 +1,39 @@
+# Python, editor and OS files
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.DS_Store
+.pytest_cache/
+
+# Credentials and machine-specific configuration
+.env
+.env.*
+!.env.example
+.telegram-credentials.py
+*.local.json
+rule-editor-enabled.json
+*.pem
+*.key
+
+# Operational data: evidence, approvals, prompts history, plans and locks
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+*.lock
+plans/*.json
+plans/dashboard/
+recovery-audit/
+*.log
+*.jsonl
+
+# Generated lab results and screenshots; retain only deliberately curated docs assets
+/verification-*
+/investigation-*
+/rehearsal-*
+/telegram-*
+/readability-prompt-*
+/*-backup*/
+/*.png
+/release-check.json

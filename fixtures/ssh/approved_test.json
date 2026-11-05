@@ -1,0 +1,59 @@
+{
+  "id": "approved_test",
+  "kind": "synthetic_fixture",
+  "incident": {
+    "id": "approved_test",
+    "source_ip": "192.0.2.20",
+    "target_ip": "192.0.2.10",
+    "target_port": 22,
+    "start": "2026-10-26T18:10:00Z",
+    "end": "2026-10-26T18:10:40Z",
+    "signature_id": 9001001,
+    "alert_count": 1,
+    "interpretation": "SSH connection threshold; does not itself prove password failure or compromise."
+  },
+  "plan": {
+    "id": "TEST-001",
+    "approval_status": "approved",
+    "owner": "Lab operator",
+    "source_ips": [
+      "192.0.2.20"
+    ],
+    "target_ip": "192.0.2.10",
+    "target_port": 22,
+    "start": "2026-10-26T18:00:00Z",
+    "end": "2026-10-26T18:30:00Z",
+    "allowed_accounts": [
+      "soc_test"
+    ],
+    "maximum_failed_attempts": 10,
+    "scope": "Validate SSH failure detection using only soc_test. No privileged accounts or successful login required.",
+    "stop_conditions": [
+      "Stop after ten failed attempts",
+      "Stop if an unexpected account is targeted"
+    ],
+    "provenance": "Synthetic approved plan fixture; not live authorization"
+  },
+  "authentication": {
+    "evidence_id": "approved_test-auth",
+    "source_ip": "192.0.2.20",
+    "target_ip": "192.0.2.10",
+    "start": "2026-10-26T18:10:00Z",
+    "end": "2026-10-26T18:10:40Z",
+    "coverage": "complete_for_fixture",
+    "failed_password_count": 8,
+    "failed_accounts": {
+      "soc_test": 8
+    },
+    "successful_login_count": 0
+  },
+  "expected": {
+    "disposition": "AUTHORIZED_TEST",
+    "delivery": "brief_report",
+    "must_not_claim": [
+      "confirmed compromise",
+      "firewall action executed"
+    ],
+    "required_observation": "Observed failures fit the approved account and attempt limit."
+  }
+}

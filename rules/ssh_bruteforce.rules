@@ -1,0 +1,1 @@
+alert tcp any any -> any 22 (msg:"ET SCAN Potential SSH Brute Force Attack"; flow:to_server; flags:S; threshold: type both, track by_src, count 5, seconds 30; classtype:attempted-admin; sid:9001001; rev:1;)
