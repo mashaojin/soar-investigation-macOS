@@ -4,6 +4,38 @@ An educational SSH investigation and response lab: **Suricata → Python evidenc
 
 The dashboard shows incidents, evidence, AI assessments, human reviews, response progress and approved test plans. Settings provides a prompt editor, saved-evidence comparisons, a constrained Suricata rule editor and read-only pipeline configuration.
 
+![SOAR dashboard showing incident history, severity, investigation stages and a completed temporary SSH block](docs/images/dashboard-overview.jpg)
+
+*Dashboard overview from a recorded lab rehearsal: incident history, AI verdict, stage progress and verified response completion.*
+
+## Dashboard walkthrough
+
+<details>
+<summary>Define the approved test scope</summary>
+
+![Test-plan editor showing source and target IPs, permitted account, attempt limit and start/end times](docs/images/test-plan-editor.jpg)
+
+*The operator defines the scope before validation and explicit approval. This screenshot is an unsaved example; no test plan was approved to create it.*
+
+</details>
+
+<details>
+<summary>Inspect the AI assessment and response status</summary>
+
+![Gemma explanation, recommended next step, evidence coverage and completed SSH response](docs/images/incident-assessment.jpg)
+
+*Gemma's explanation and recommendation appear beside the recorded response status. Python validates the facts and independently enforces response approval.*
+
+</details>
+
+## Telegram notifications
+
+| Temporary response and rollback | Manual-review notice |
+| --- | --- |
+| ![Telegram SSH response message with incident date and time and confirmed live rollback](docs/images/telegram-live-response.png) | ![Telegram manual-review notice with incident reference, date, time, reason and dashboard link](docs/images/telegram-manual-review.png) |
+
+*Actual messages from recorded lab incidents, cropped to the relevant messages. The live-response example shows the completed state after the temporary deny was removed; its approval buttons are no longer displayed. The review notice explains why the saved incident needs operator attention.*
+
 ## What makes the assessment
 
 Python continuously collects and correlates alerts, reads scoped SSH authentication records and checks the approved test-plan scope. Gemma chooses a verdict and recommended next step from those facts. Python validates the result and independently enforces response policy. The current version uses one direct Ollama request per assessment; Hermes and autonomous model tool use are not part of this final workflow.
