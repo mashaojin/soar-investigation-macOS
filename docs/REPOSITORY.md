@@ -1,5 +1,7 @@
 # Repository and publication
 
+GitHub repository: [mashaojin/soar-investigation-macOS](https://github.com/mashaojin/soar-investigation-macOS), renamed from `soc-pipeline`. Local checkout names and historical archive names need not change; private configuration can refer to their existing paths. The separate [Windows project](https://github.com/mashaojin/soar-investigation-windows) has its own platform setup.
+
 ## Included
 
 Current runtime modules and their shared dependencies, dashboard assets, synthetic regression fixtures, offline tests, configuration examples, current documentation, exported instructions and the example SSH sensor rule. Python sources remain at the root so current sibling-file imports and victim-side script loading work without changing runtime paths.
@@ -10,7 +12,7 @@ The active `*.local.json` files, `rule-editor-enabled.json`, actual test-plan re
 
 ## Archived separately
 
-A sibling `soc-pipeline-archive-<UTC timestamp>` directory contains old development backups, receipts, screenshots, retired scripts/tests, previous documentation, inactive configuration/databases and Word-plan history. Nothing was deleted. The archive manifest preserves source/destination paths and moves were verified by SHA-256. A consistent snapshot of active state was also saved before cleanup. The archive contains private data and is not part of the public repository.
+In the original operator’s workspace, a sibling `soc-pipeline-archive-<UTC timestamp>` directory contains old development backups, receipts, screenshots, retired scripts/tests, previous documentation, inactive configuration/databases and Word-plan history. Nothing was deleted. The archive manifest preserves source/destination paths and moves were verified by SHA-256. A consistent snapshot of active state was also saved before cleanup. The archive contains private data and is not part of the public repository. It is neither provided nor required for a fresh checkout.
 
 ## Before publishing
 

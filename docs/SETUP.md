@@ -1,5 +1,7 @@
 # Setup and configuration
 
+For a fresh installation, follow the ordered [macOS / UTM guide](MACOS.md). This page is a configuration overview; the full guide supplies guest setup, sensor configuration, SSH access, readiness checks and live-response verification. The repository is now named `soar-investigation-macOS`; existing local `soc-pipeline` directories can remain in place.
+
 ## 1. Match the lab topology
 
 The current live demonstration expects UTM VMs named `Victim`, `Kali Linux`, and `Trust-Client` with addresses `.6`, `.4`, and `.8` on `192.168.64.0/24`. The victim SSH account is `victim`. These identities appear in bounded helpers as well as example configuration. Retargeting the lab requires reviewing code, policy and tests together.

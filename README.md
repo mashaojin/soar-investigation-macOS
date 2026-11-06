@@ -1,120 +1,461 @@
-# SOAR investigation dashboard
+# macOS SSH Investigation and Response Lab
 
-An educational SSH investigation and response lab: **Suricata → Python evidence collection → local Gemma assessment → Telegram operator decision → optional temporary firewall response**.
+[![Offline CI](https://github.com/mashaojin/soar-investigation-macOS/actions/workflows/tests.yml/badge.svg)](https://github.com/mashaojin/soar-investigation-macOS/actions/workflows/tests.yml)
 
-The dashboard shows incidents, evidence, AI assessments, human reviews, response progress and approved test plans. Settings provides a prompt editor, saved-evidence comparisons, a constrained Suricata rule editor and read-only pipeline configuration.
+**soar-investigation-macOS** is a macOS-focused, Python-led lab that turns **Suricata alerts into evidence-based investigations, dashboard records and human-approved responses**.
 
-![SOAR dashboard showing incident history, severity, investigation stages and a completed temporary SSH block](docs/images/dashboard-overview.jpg)
+This is the original **Mac / UTM / Gemma4** implementation, previously named `soc-pipeline`. The separate [Windows project](https://github.com/mashaojin/soar-investigation-windows) has its own setup, platform adapters and verification limits. This README uses the same organization as that project, but all commands below describe this macOS implementation.
 
-*Dashboard overview from a recorded lab rehearsal: incident history, AI verdict, stage progress and verified response completion.*
+**Suricata → Python correlation and SSH evidence → one bounded Ollama assessment → Python validation → Telegram decision → optional temporary SSH deny with victim-side rollback.**
 
-## Dashboard walkthrough
+The model assesses evidence. Python owns collection, validation and response policy. A human approves each eligible firewall response. This is an educational lab, not a production security product. The current pipeline calls Ollama directly; it does not require Hermes or autonomous model tools.
+
+> **macOS status:** the three manual scenarios and actual Telegram-approved, 60-second UFW block/rollback were exercised in the original UTM lab. A clean source copy passed **238 offline tests**. The repository does not provision all VMs automatically, and model accuracy across arbitrary attacks or configurations is not established. Follow the checkpoints below rather than treating a passing CI run as a live-lab qualification.
+
+## Contents
+
+- [Workflow and decision boundaries](#workflow)
+- [Dashboard and Telegram screenshots](#screenshots)
+- [macOS lab requirements](#macos-lab-requirements)
+- [Quick start](#quick-start)
+- [Configuration and credentials](#configuration-and-credentials)
+- [Three manual scenarios](#three-manual-scenarios)
+- [Telegram decisions and live response](#telegram-decisions)
+- [Stop, restart and recovery](#stop-restart-and-recovery)
+- [Verification and troubleshooting](#verification-status)
+- [Documentation and repository layout](#documentation)
+
+## Workflow
+
+```mermaid
+flowchart TD
+    A[Manual lab SSH activity] --> B[Victim Suricata EVE JSON]
+    B --> C[One continuous Python monitor on macOS]
+    C --> D[Correlate related alerts into an incident]
+    D --> E[Scoped Victim SSH journal evidence]
+    D --> F[Approved-plan lookup and scope comparisons]
+    E --> G[One bounded local Gemma4 assessment]
+    F --> G
+    G --> H{Python validates output and evidence}
+    H -->|Invalid or insufficient| I[Manual review]
+    H -->|Valid Benign or report only| J[Telegram report]
+    H -->|Valid Suspicious and block requested| K{Independent response policy}
+    K -->|Ineligible| J
+    K -->|Eligible| L[Incident-bound Telegram approval request]
+    L -->|Deny or expire| J
+    L -->|Authorized operator approves| M[Guarded response worker]
+    M --> N[Arm Victim rollback before deny]
+    N --> O[Apply and independently verify temporary SSH deny]
+    O --> P[Verify removal and restored source connectivity]
+    I --> Q[Separate human conclusion]
+    C --> R[Dashboard history and live progress]
+    J --> R
+    P --> R
+    Q --> R
+```
+
+### Responsibilities
+
+| Component | Responsibility | Cannot authorize |
+| --- | --- | --- |
+| Suricata | Detect connection-threshold activity and write EVE alerts | Password outcomes, malicious intent or a block |
+| Python collector | Continuous ingestion, cursor handling and incident correlation | An AI verdict |
+| Evidence/plan layer | Scoped authentication outcomes, coverage and authorization comparisons | A security classification |
+| Gemma4 through Ollama | Verdict, explanation and recommended next step | Tool execution, shell commands or firewall changes |
+| Python validators/policy | Check structure, facts, coverage, attribution and response eligibility | Human approval |
+| Telegram operator | Approve/deny one exact eligible response, or record a separate human review | Reuse an expired/stale approval |
+| Victim helper | Fixed source-to-Victim SSH deny and automatic rollback | Arbitrary model-generated commands |
+
+Gemma chooses **Benign**, **Suspicious** or **Insufficient Evidence**, and recommends **Report only**, **Request more evidence** or **Request block approval**. Scenarios are inputs, not predetermined verdicts. A Suspicious verdict alone does not offer a block: the recommendation and independent Python checks must also pass.
+
+### What happens to one incident
+
+1. You run a bounded SSH test manually. For approved activity, create and approve the plan **before its start**.
+2. Suricata writes an alert to `/var/log/suricata/eve.json` on Victim.
+3. The Mac monitor reads new EVE records over SSH, saves the cursor and groups related alerts. An incident receives a durable internal ID, readable number and revision.
+4. Python waits for its evidence window to close, then reads the scoped `ssh.service` journal and the recorded test-plan authorization. Counts and scope comparisons are supplied as facts.
+5. One local Ollama request asks Gemma for a structured assessment. Python rejects incomplete, unsupported or inconsistent output; it does not silently retry until a desired answer appears.
+6. The report, review notice or eligible response request is delivered through the monitor's one Telegram handler. Dashboard history retains the evidence and assessment.
+7. An authorized YES can trigger the independent live worker only in live mode. Victim arms rollback before installing the deny. The worker checks the receipt, protected management, blocked source connectivity and restored access after removal.
+
+**Evidence timing:** unapproved scopes use a fixed **120-second** correlation window, up to **60 seconds** of pre-alert context and a **30-second** arrival allowance. Approved scopes use the entire approved plan window plus the arrival allowance. Authorization boundaries can shorten an unapproved scope. Collection catch-up and inference add further delay. Related runs can become one incident; do not expect one incident for every invocation of the client script.
+
+## Screenshots
+
+These are actual screenshots from recorded Mac/UTM lab rehearsals. Different images show different incidents; they are not one continuous replay. The Telegram captures are cropped to the relevant messages.
+
+### Dashboard
+
+![Mac/UTM dashboard showing incident history, severity, stage progress and completed response](docs/images/dashboard-overview.jpg)
+
+The dashboard preserves readable incident numbers, timestamps, grouped alerts, AI assessments, separate human conclusions and response progress. Monitor health is checked by heartbeat, separately from saved database state.
 
 <details>
-<summary>Define the approved test scope</summary>
+<summary>Test-plan editor and incident assessment</summary>
 
-![Test-plan editor showing source and target IPs, permitted account, attempt limit and start/end times](docs/images/test-plan-editor.jpg)
+![Test-plan editor showing source, victim, accounts, attempt limit and timing](docs/images/test-plan-editor.jpg)
 
-*The operator defines the scope before validation and explicit approval. This screenshot is an unsaved example; no test plan was approved to create it.*
+*An unsaved plan-editor example. Test-plan approval defines authorized activity; it does not approve a firewall response.*
+
+![Gemma assessment, evidence coverage and completed response status](docs/images/incident-assessment.jpg)
+
+*Recorded Gemma assessment and response example. Read the retained evidence and coverage limits alongside the model's explanation.*
 
 </details>
 
-<details>
-<summary>Inspect the AI assessment and response status</summary>
+### Telegram
 
-![Gemma explanation, recommended next step, evidence coverage and completed SSH response](docs/images/incident-assessment.jpg)
-
-*Gemma's explanation and recommendation appear beside the recorded response status. Python validates the facts and independently enforces response approval.*
-
-</details>
-
-## Telegram notifications
-
-| Temporary response and rollback | Manual-review notice |
+| Live-response completion | Manual-review notice |
 | --- | --- |
-| ![Telegram SSH response message with incident date and time and confirmed live rollback](docs/images/telegram-live-response.png) | ![Telegram manual-review notice with incident reference, date, time, reason and dashboard link](docs/images/telegram-manual-review.png) |
+| ![Telegram message after a completed temporary SSH block and rollback](docs/images/telegram-live-response.png) | ![Telegram manual-review notice with incident reference, time and reason](docs/images/telegram-manual-review.png) |
 
-*Actual messages from recorded lab incidents, cropped to the relevant messages. The live-response example shows the completed state after the temporary deny was removed; its approval buttons are no longer displayed. The review notice explains why the saved incident needs operator attention.*
+The live screenshot shows a completed historical response, so its pending approval buttons are no longer displayed. Current eligible live requests offer **YES — Approve LIVE 60s block** and **NO — Deny block / report only**. New manual-review notices offer **Benign / Suspicious / Need more evidence**. See [screenshot provenance](docs/SCREENSHOTS.md).
 
-## What makes the assessment
+## macOS lab requirements
 
-Python continuously collects and correlates alerts, reads scoped SSH authentication records and checks the approved test-plan scope. Gemma chooses a verdict and recommended next step from those facts. Python validates the result and independently enforces response policy. The current version uses one direct Ollama request per assessment; Hermes and autonomous model tool use are not part of this final workflow.
+| Component | Requirement |
+| --- | --- |
+| Host | macOS with UTM installed at `/Applications/UTM.app`, OpenSSH and Python 3.12+ |
+| VM backend | QEMU-backed UTM Linux guests with working guest-agent execution and file transfer |
+| Inference | Ollama on the Mac, reachable at `127.0.0.1:11434`, exact model `gemma4:e4b` |
+| Model budgets | Configured context capacity 65,536 tokens; output cap 1,024 tokens; bounded requests and validation |
+| Victim | Ubuntu, SSH, Suricata/EVE, readable SSH journal, UFW and systemd |
+| Trust-Client | Ubuntu guest for approved tests and account-scope scenarios |
+| Attacker | Kali guest for the controlled unapproved scenario |
+| Network | One shared lab subnet with the exact identities below and working guest-to-guest and Mac-to-Victim access |
+| Telegram | Your own bot and private chat/operator identity; exactly one poller |
+| Capacity | Enough host memory for three guests and local inference; no universal hardware minimum is qualified by CI |
 
-Suspicious is an assessment, not proof of compromise. Missing evidence or an invalid model response goes to human review. Human conclusions remain separate from AI assessments; they do not authorize firewall changes.
+Python uses the standard library: there is no pip installation step. Node is used for development/CI syntax checks, not the Python dashboard. Offline tests also run on Linux. Choose guest images matching the Mac's architecture; the UTM installation and guest-network checkpoints are in the [full setup guide](docs/MACOS.md).
 
-## Lab and requirements
+### Fixed lab identities
 
-- Host: macOS with UTM, OpenSSH, Python 3.12+ and Ollama with `gemma4:e4b`.
-- Victim: Ubuntu, `192.168.64.6`, SSH + Suricata + UFW.
-- Attacker: Kali, `192.168.64.4`.
-- Approved-test client: Ubuntu, `192.168.64.8`.
-- Management source: `192.168.64.1`, protected from the response rule.
+| Role | UTM VM name | Guest account | IPv4 address |
+| --- | --- | --- | --- |
+| Victim | `Victim` | `victim` | `192.168.64.6/24` |
+| Attacker | `Kali Linux` | `kali` | `192.168.64.4/24` |
+| Approved-test client | `Trust-Client` | `trust-client` | `192.168.64.8/24` |
+| Management | Mac host on the lab network | Your Mac account | `192.168.64.1` |
 
-Python code uses the standard library; there is no pip install step. Offline tests also run on Linux. The live VM helpers intentionally target this topology and UTM VM names; changing JSON alone does not retarget the entire lab.
+The management source and Victim address are protected from response targeting. Confirm the Mac's actual SSH source as seen by Victim; do not assume every UTM installation uses these addresses. IPs, guest names, usernames and UTM transport assumptions appear in Python helpers as well as JSON. **Reproduce this exact topology or port the helpers and tests together; editing JSON alone does not retarget the lab.**
 
-## Start
+## Quick start
 
-Run from this directory:
+Follow these steps in order. **Mac** commands run in the repository root on the host; **Victim**, **Kali** and **Trust-Client** commands run in those VMs. The detailed [Mac/UTM setup guide](docs/MACOS.md) includes guest installation, sensor configuration, SSH permissions and verification commands.
+
+### 1. Obtain and test the source — Mac
+
+```sh
+git clone https://github.com/mashaojin/soar-investigation-macOS.git
+cd soar-investigation-macOS
+python3 --version
+python3 -m unittest discover -s tests -q
+```
+
+For a private repository, authenticate locally using an authorized GitHub account. Do not put an access token into source or a clone URL. Existing checkouts can keep their local `soc-pipeline` folder; the folder name is not a runtime requirement.
+
+**Checkpoint:** the offline suite passes without VMs, a model or Telegram credentials. Tests use synthetic fixtures, temporary databases and mocked external effects; they do not run lab attacks or real firewall actions.
+
+### 2. Prepare the three guests — UTM and guest consoles
+
+Complete [guest/network setup](docs/MACOS.md#2-create-the-guests-and-match-the-network), [Victim services](docs/MACOS.md#3-prepare-victim-services-and-the-ssh-sensor), [verified SSH](docs/MACOS.md#4-establish-verified-mac-to-victim-ssh) and [guest-agent readiness](docs/MACOS.md#5-verify-utm-guest-execution-and-stage-clients).
+
+Before continuing, verify:
+
+- Exact VM names, IPs and source routes match the table above; the guests and Mac can reach Victim TCP/22.
+- Victim's SSH and Suricata services are active; the SSH rule SID `9001001` is loaded on the Victim-facing interface and EVE alert logging is enabled.
+- `victim` can read EVE and the root-origin SSH journal records over a trusted, noninteractive SSH connection.
+- UTM guest-agent commands execute as required and guest file-transfer receipts can be read. Live enforcement requires root guest execution on Victim.
+- The host and guests have consistent time. UFW allows ordinary SSH before any temporary response.
+
+**Checkpoint:** use the concrete commands in the setup guide and inspect their results. Initialization does not create VMs, grant privileges or configure the sensor for you.
+
+### 3. Initialize private files and local Ollama — Mac
 
 ```sh
 python3 configure_local.py
+ollama pull gemma4:e4b
+ollama list
+curl --fail http://127.0.0.1:11434/api/tags
+```
+
+Start the installed Ollama app first; if you deliberately run `ollama serve` instead, use only one server. The [official Ollama download](https://ollama.com/download/mac) and [quickstart](https://docs.ollama.com/quickstart) describe installation. The current code requires the exact model identity; substituting another tag requires a deliberate implementation/evaluation change.
+
+Review `live.ssh.local.json`, `runtime.ssh.live.local.json` and `response.local.json`. New initialization uses **dry run**, an empty plan registry and the instruction exported in `prompts/current.txt`. Existing files, prompts and plans are preserved, including an existing live-mode choice.
+
+**Checkpoint:** confirm the response mode yourself. A new reader should see `"mode": "dry_run"`; do not enable live mode yet.
+
+### 4. Stage and preflight the manual clients — guests, then Mac
+
+In **each client VM**, as its normal user:
+
+```sh
+mkdir -p ~/soc-demo
+```
+
+On the **Mac**:
+
+```sh
+python3 stage_demo_clients.py
+```
+
+The stager uses UTM to copy and byte-verify `ssh_demo_client.py`; it generates no test traffic. Run the route-only preflight on each client:
+
+```sh
+# Kali
+python3 ~/soc-demo/ssh_demo_client.py --mode unapproved --preflight
+```
+
+```sh
+# Trust-Client
+python3 ~/soc-demo/ssh_demo_client.py --mode approved --preflight
+```
+
+Verify Victim's console host-key fingerprint on each client before a test. The current demo client uses `accept-new`, which rejects changed keys but can accept a previously unknown key; pre-establish verified trust yourself. The Mac collector uses strict host-key checking.
+
+**Checkpoint:** preflight reports source `.4` for Kali and `.8` for Trust-Client, target `.6`, and `attack_executed: false`. A shared folder is optional; `/tmp` is not the installation location.
+
+### 5. Start the dashboard and monitor — two Mac terminals
+
+```sh
+# Terminal 1: dashboard only
 python3 dashboard.py
 ```
 
-In another terminal, after reviewing the local configuration and starting the lab VMs and Ollama:
-
 ```sh
+# Terminal 2: collection and model assessment, without Telegram or live dispatch
 python3 monitor.py --config live.ssh.local.json --runtime runtime.ssh.live.local.json --db ssh-live.sqlite3
 ```
 
-Open [the dashboard](http://127.0.0.1:8765/). The dashboard does not start the monitor. Stop either foreground process with Ctrl-C. The monitor remains running across incidents.
+Open [http://127.0.0.1:8765](http://127.0.0.1:8765). Check **Monitor running**, collector output and recent evidence, not HTTP availability alone. The first `start_at: end` collection establishes a baseline and skips older EVE data. Keep that database across restarts.
 
-For Telegram, follow [setup](docs/SETUP.md), export the bot credentials, confirm exclusive bot polling, then add `--telegram` to the monitor command. New configuration defaults to **dry run**. Existing local configuration is preserved by setup; inspect the dashboard mode before approving a response.
+**The dashboard does not start collection, inference or Telegram polling.** This Mac monitor has no Windows-style `--collection-only` flag: the command above performs model assessment when an evidence window is ready. Omitting `--telegram` leaves the Telegram handler and response worker disabled.
 
-## Documentation
+### 6. Enable Telegram, still in dry run — monitor terminal
 
-- [Setup and configuration](docs/SETUP.md)
-- [Three-scenario manual demonstration](docs/DEMO.md)
-- [Architecture, files and decision boundaries](docs/ARCHITECTURE.md)
-- [Settings, reviews and operations](docs/OPERATIONS.md)
-- [Repository contents and publication checklist](docs/REPOSITORY.md)
+Complete [configuration and credentials](#configuration-and-credentials). Stop the monitor with Ctrl-C and wait for it to exit. In the terminal that will run the replacement monitor:
 
-## Verification
+```sh
+set -a
+source .env
+set +a
+python3 monitor.py --config live.ssh.local.json --runtime runtime.ssh.live.local.json --db ssh-live.sqlite3 --telegram
+```
+
+**Checkpoint:** response mode is dry run, the configured bot is exclusively owned by this monitor, and dashboard component health shows a polling Telegram handler. Follow the three scenarios below and inspect each actual report/decision. Keep this one monitor running through responses.
+
+## Configuration and credentials
+
+| Local file | Purpose |
+| --- | --- |
+| `live.ssh.local.json` | EVE SSH target, log path, source/signature filters, initial cursor behavior and polling |
+| `runtime.ssh.live.local.json` | SSH evidence enrichment, authoritative plan registry and model identity |
+| `response.local.json` | Dry-run/live mode, source/target restrictions, duration, activation and approval policy |
+| `.env` | Telegram bot token and private chat/operator IDs, exported by your shell |
+| `plans/dashboard-plans.json` | Actual local test-plan versions and approvals |
+| `ssh-live.sqlite3` | Events, cursor, correlated incidents, assessments, human reviews and response records |
+| `plan-editor.sqlite3`, `lab-experiments.sqlite3` | Plan drafts, prompt versions, active instruction and comparisons |
+| `rule-editor-enabled.json` | Local verification receipt for the optional fixed rule editor helper |
+
+Operational files are ignored by Git. Public examples are in `config/`. `configure_local.py` creates absent defaults; it does not silently reset an existing installation or provide another operator's approvals.
+
+For Telegram:
+
+1. Create a bot through BotFather, then start its private chat from your own Telegram account. Obtain its token and your private chat ID locally.
+2. Copy the example and edit the placeholders **locally**:
+
+   ```sh
+   cp .env.example .env
+   chmod 600 .env
+   ```
+
+3. Set `SOC_TELEGRAM_BOT_TOKEN`, `SOC_TELEGRAM_CHAT_ID` and `SOC_TELEGRAM_USER_ID`. This version requires the operator user ID to equal the positive private chat ID.
+4. Stop every other consumer of this bot, including the old Hermes loop, then set `exclusive_polling_confirmed` to `true` in `response.local.json` while retaining `mode: dry_run`.
+5. Export your `.env` as shown above and restart one monitor with `--telegram`. The Mac launcher does not automatically load `.env`; source only your own reviewed file.
+
+The loader also supports an existing local Python constants file through `credentials_source`; it parses constants without executing the file. New checkouts can use environment variables and need no legacy script. Never publish tokens, private keys, actual plans or incident databases.
+
+## Three manual scenarios
+
+Start with dry-run responses and verify every stage before moving to live mode. Run the helper manually, once per reviewed rehearsal, only against your own Victim lab.
+
+| Scenario | Manual activity | Evidence-dependent interpretation | Possible Telegram path |
+| --- | --- | --- | --- |
+| Approved test | Trust-Client uses `soc_test` inside an approved window and attempt limit | Benign when retained evidence supports the plan | Report only, or review if evidence is insufficient |
+| Unapproved activity | Kali makes bounded SSH attempts with no matching approved plan | Suspicious if the observed context supports that conclusion; no plan alone is not proof of attack | Eligible block approval, report only or manual review |
+| Scope violation | Trust-Client attempts `root` while its plan permits only `soc_test` | Recorded root attempt is outside account scope; Gemma assesses its significance | Eligible block approval, report only or manual review |
+
+### 1. Approved test — Trust-Client
+
+On the dashboard choose **New test plan**. Enter:
+
+- Source `192.168.64.8`; target `192.168.64.6`; permitted account `soc_test`.
+- Failed-attempt limit `10`; your operator name.
+- A future 3–5 minute window, in the timezone shown by the form.
+
+Select **Validate**, review the scope, then **Approve plan before its start**. Wait until the approved start time and run once on **Trust-Client**:
+
+```sh
+python3 ~/soc-demo/ssh_demo_client.py --mode approved --execute
+```
+
+Wait until plan end plus 30 seconds, collection catch-up and model processing. Inspect the dashboard and Telegram. Evidence supporting authorized testing should normally yield a Benign report. No firewall approval is needed for a report-only result.
+
+### 2. Unapproved activity — Kali
+
+Confirm no approved plan covers Kali `.4` at this time. Run once on **Kali**:
+
+```sh
+python3 ~/soc-demo/ssh_demo_client.py --mode unapproved --execute
+```
+
+Wait for the fixed correlation window and arrival allowance to finish. Read the evidence and AI recommendation. Eligible suspicious requests offer dry-run approval/denial first; live buttons appear only after deliberate live-mode activation. If the assessment requires review, use the review path instead of trying to force a block.
+
+### 3. Root attempt during an approved test — Trust-Client
+
+After the previous test window finishes, create and approve a fresh, nonoverlapping plan for Trust-Client with only `soc_test` permitted. During that window run once on **Trust-Client**:
+
+```sh
+python3 ~/soc-demo/ssh_demo_client.py --mode scope-violation --execute
+```
+
+This attempts `root` once and `soc_test` five times. Verify that the actual SSH journal captured `root`; client output alone cannot establish it. An approved plan does not excuse an account outside its scope.
+
+The helper makes six deliberately failed attempts in two bursts separated by 12 seconds and stops on unexpected success. SSH protection can reject connections before password checking, so six client attempts need not produce six failed-password records. Do not disable protections to manufacture an expected result. For repeat tests, use fresh plans and wait for earlier windows/responses to finish; closely related runs can be consolidated.
+
+## Telegram decisions
+
+### Response approval
+
+An eligible Suspicious assessment with a supported block recommendation can ask:
+
+> Do you authorize blocking this source from accessing the victim's SSH service for 1 minute?
+
+| Decision | Dry-run mode | Live mode |
+| --- | --- | --- |
+| YES | Records a simulated response; no firewall command | Revalidates the exact request and dispatches one guarded 60-second SSH block |
+| NO | Records denial and retains the report | Records denial and retains the report; no block |
+| No answer | Request expires without action | Request expires after 10 minutes without a block |
+
+Live buttons explicitly say **YES — Approve LIVE 60s block** and **NO — Deny block / report only**. Dry-run buttons explicitly identify the simulation. Test-plan approval is separate from response approval.
+
+After the dry-run rehearsal passes, follow [live-mode activation and verification](docs/MACOS.md#8-enable-and-verify-live-response) to deliberately set `mode: live`, `duration_seconds: 60` and a fresh UTC `live_enabled_after`, then restart the monitor. This is an operator configuration step, not something the model performs.
+
+```mermaid
+sequenceDiagram
+    participant O as Operator
+    participant T as Telegram handler
+    participant P as Python live worker
+    participant V as Victim helper
+    O->>T: YES on current incident-bound request
+    T->>P: Record exact authorized decision
+    P->>P: Revalidate facts, scope, identity, expiry and revision
+    P->>V: One fixed UTM guest-agent dispatch
+    V->>V: Arm and verify 60-second rollback timer
+    V->>V: Insert tagged source-to-Victim SSH deny
+    P->>V: Check receipt and protected management
+    P->>P: Probe from the actual source VM
+    V->>V: Automatically remove its tagged deny
+    P->>V: Verify removal
+    P->>P: Verify restored source connectivity
+    P->>T: Recorded response status
+```
+
+The deny affects the source IP's access to **Victim TCP/22**, not all network traffic. It can interrupt permitted SSH tests from that same client. The `.1` management source and `.6` Victim address are protected. Keep Victim running: rollback is scheduled on Victim independently of the Mac, dashboard and Telegram. The broad SSH ALLOW rule can remain; the temporary source-specific deny is inserted ahead of it and later removed.
+
+### Manual investigation review
+
+Insufficient evidence, a model request for more evidence or a validation error can lead to a manual-review notice:
+
+- **🟢 Benign:** save the human conclusion and resolve the review.
+- **🔴 Suspicious:** save the human conclusion and resolve the review.
+- **🟡 Need more evidence:** keep the case open for operator investigation.
+
+These conclusions are separate from the original AI report and **never approve a firewall change**. Need more evidence does not automatically launch another model call or collect another source. Review buttons bind to the current incident/evidence and prior review, are single use and expire after 24 hours. Use the dashboard for notes or follow-up reviews; notes are optional.
+
+Rejected output has **no accepted AI verdict**, even if raw text contained a label. The dashboard retains the technical error and original output for inspection. The `127.0.0.1` link in Telegram opens the dashboard on the Mac running it; it is not a remotely reachable phone dashboard.
+
+## Stop, restart and recovery
+
+Press Ctrl-C in the relevant foreground terminal and wait for exit. Start the dashboard or monitor again using the same commands. Preserve the databases, approvals, plan registry and collector cursor across ordinary restarts. Do not run two monitors for one database or two pollers for one bot.
+
+A stopped dashboard can cause a browser connection-refused error without any prompt corruption. Restart `python3 dashboard.py`; check its terminal output if it exits. Saving a prompt version does not activate it until you explicitly select **Activate**. Copy unsaved editor text before refreshing a failed page.
+
+Keep the monitor running through Telegram decisions and response completion. If execution is uncertain, inspect the recorded run and Victim receipt before any recovery; never repeat apply blindly or flush unrelated firewall rules. A collection gap stops collection instead of pretending unread records were retained. The narrow audited `recover_compressed_rotation.py` utility is not a generic cursor reset. See [operations](docs/OPERATIONS.md).
+
+Before another rehearsal, verify guest addresses, routes, SSH host-key identity and time again. Create new plans and fresh response requests; do not reuse expired approvals or copy historical operational databases into a new installation.
+
+## Verification status
+
+| Check | macOS result or limit |
+| --- | --- |
+| Clean-copy offline suite | **238 tests passed** on Python 3.12 and 3.14; CI uses Linux/Python 3.12 |
+| Dashboard JavaScript and Git whitespace | Passed |
+| Fresh local initialization | Verified dry-run defaults, empty plan registry and preserved existing state |
+| Original Mac/UTM three manual scenarios | Exercised with retained evidence, reports and review paths |
+| Original Telegram-approved live response | Actual source-specific deny and automatic rollback exercised and observed |
+| Fresh third-party deployment | Setup steps must be independently verified on that machine; not established by CI |
+| Reliable classification of arbitrary activity | **Not established**; explanations and factual validation have known limits |
+
+### Reproduce software checks
 
 ```sh
 python3 -m unittest discover -s tests -q
 node --check web/app.js
 node --check web/experiments.js
+git diff --check
 ```
 
-The suite uses synthetic fixtures, isolated databases, mocked external calls and temporary localhost HTTP servers. It requires no VMs, Telegram credentials or running model and sends no real attacks or firewall commands. GitHub Actions runs the offline suite on Python 3.12.
-
-Optional actual-model evaluation:
+CI runs isolated software checks. It does not provision guests, invoke Ollama, send Telegram messages, generate attacks or apply firewall rules. Optional actual-model evaluation uses synthetic fixtures and local Ollama:
 
 ```sh
-python3 verify_gemma.py
+python3 verify_gemma.py --output verification-gemma-direct.json
 ```
 
-This calls local Ollama using three synthetic scenarios and writes an ignored verification receipt. Model classifications can vary; passing offline tests does not establish accuracy on all attacks or prove a fresh live rehearsal.
+A successful model call or valid JSON does not establish a correct security judgment. Preserve the evidence, prompt version, errors and coverage; repeatedly generating incidents until the desired label appears is not verification.
 
-## Repository layout
+### Common problems
+
+| Symptom | Check |
+| --- | --- |
+| Dashboard connection refused | Is `dashboard.py` still running? Read its terminal output; the monitor is a separate process |
+| Page loads but no incidents arrive | Monitor heartbeat, collector output, actual route, EVE permissions, loaded SID and capture interface |
+| Settings prompt edit disappears | Save a version before activation; unsaved browser text is not a stored prompt |
+| SSH fails after reboot | Current guest IP, console-verified host fingerprint, loaded Mac key and readable journal/log |
+| No EVE alert after attempts | Victim capture interface, rule inclusion, SYN threshold and actual traffic timing |
+| Root attempt is missing | Retained scoped journal, account counts, plan window and SSH protection events |
+| Manual review instead of a verdict | Read coverage, validation error and original output; do not disable checks to force a result |
+| Telegram is silent | Exported credentials in the monitor terminal, bot/private chat identity, exclusive poller and handler health |
+| No live buttons | Model verdict/recommendation, independent eligibility, live activation time, fresh incident and no successful logins |
+| VM agent/file operations fail | Exact UTM names, QEMU guest-agent channel/service, required execution identity and receipt availability |
+| SSH ALLOW still appears after blocking | This is expected: inspect the temporary source deny and its tagged removal, plus source connectivity |
+
+## Documentation
+
+- [Full macOS / UTM setup and readiness checkpoints](docs/MACOS.md)
+- [Setup overview](docs/SETUP.md)
+- [Three-scenario demonstration](docs/DEMO.md)
+- [Architecture and decision boundaries](docs/ARCHITECTURE.md)
+- [Settings, reviews and operations](docs/OPERATIONS.md)
+- [Screenshot provenance](docs/SCREENSHOTS.md)
+- [Repository and publication rules](docs/REPOSITORY.md)
+- [Separate Windows implementation](https://github.com/mashaojin/soar-investigation-windows)
 
 ```text
-soc-pipeline/
-├── README.md
-├── configure_local.py       # Non-destructive local initialization
-├── monitor.py               # Continuous collector, analyst and response orchestration
+soar-investigation-macOS/
+├── configure_local.py       # Initialize absent private configuration
+├── monitor.py               # Continuous collection, analysis and response orchestration
 ├── dashboard.py             # Loopback dashboard and protected APIs
-├── *.py                     # Supporting pipeline and bounded lab helpers
-├── config/                  # Public configuration examples
-├── docs/                    # Current setup, architecture and demonstration guides
-├── fixtures/                # Synthetic regression-test inputs
-├── plans/                   # Local registry location (actual plans ignored)
+├── *.py                     # Evidence, validation, UTM transports and bounded helpers
+├── config/                  # Public examples; exact topology remains explicit
+├── docs/                    # Setup, architecture, operations and screenshot provenance
+├── fixtures/                # Deterministic synthetic observations
+├── plans/                   # Actual local registry is ignored
 ├── prompts/                 # Exported current and built-in instructions
-├── rules/                   # Example SSH Suricata rule
-├── tests/                   # Offline regression tests
-├── web/                     # Dashboard HTML, JavaScript and CSS
+├── rules/                   # Example Suricata SSH rule
+├── tests/                   # Offline regressions; no live enforcement
+├── web/                     # Dashboard assets
 └── .github/workflows/       # Offline CI
 ```
 
-Operational databases, actual approvals/test plans, credentials, machine-specific JSON, logs and generated results are excluded from Git. Historical development files are preserved in a separate local archive outside this folder. Use the published repository files, not the entire surrounding workspace, when sharing the project.
+Credentials, private keys, actual approval/plan registries, incident databases, logs, machine-specific JSON and local diagnostic archives are excluded from Git. Reproduce from this checkout, not by copying another operator's surrounding workspace. Repository visibility, local operational state and licensing are unchanged by the repository rename.
