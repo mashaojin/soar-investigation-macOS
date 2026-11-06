@@ -1,6 +1,7 @@
 """Six bounded lab SSH attempts. Run manually on Kali or Trust-Client."""
 import argparse
 import json
+import ipaddress
 import os
 from pathlib import Path
 import subprocess
@@ -9,13 +10,22 @@ import time
 
 TARGET='192.168.64.6'
 
-def run(mode, preflight=False):
+def run(mode, preflight=False, *, lab=None):
     expected='192.168.64.4' if mode=='unapproved' else '192.168.64.8'
-    route=json.loads(subprocess.check_output(['ip','-j','route','get',TARGET],text=True,timeout=5))[0]
+    target=TARGET;windows=lab is not None and lab.get('platform')=='windows-hyperv'
+    if lab is not None:
+        if lab.get('platform') not in ('windows-hyperv','macos-utm') or lab.get('ssh_port')!=22:
+            raise ValueError('Explicit supported lab profile and TCP/22 required')
+        target=str(ipaddress.IPv4Address(lab['victim']['ip']))
+        expected=str(ipaddress.IPv4Address(lab['attacker' if mode=='unapproved' else 'trust_client']['ip']))
+        if target==expected:raise ValueError('Client and victim must be separate')
+    known_hosts=Path(__file__).with_name('known_hosts')
+    if windows and not known_hosts.is_file():raise ValueError('Stage the verified Victim known_hosts file before testing')
+    route=json.loads(subprocess.check_output(['ip','-j','route','get',target],text=True,timeout=5))[0]
     if route.get('prefsrc') != expected:
         raise ValueError(f'This mode requires source {expected}; route reports {route.get("prefsrc")}')
     if preflight:
-        result={'source_ip':expected,'target_ip':TARGET,'route':route,'attack_executed':False}
+        result={'source_ip':expected,'target_ip':target,'route':route,'attack_executed':False}
         Path('/tmp/soar-client-preflight.json').write_text(json.dumps(result))
         print(json.dumps(result));return
     accounts=['soc_test']*6 if mode=='approved' else ['soc_rehearsal_invalid']*6
@@ -33,8 +43,10 @@ def run(mode, preflight=False):
                 time.sleep(12)
             command=['ssh','-o','ConnectTimeout=3','-o','ConnectionAttempts=1',
                      '-o','PreferredAuthentications=password','-o','PubkeyAuthentication=no',
-                     '-o','NumberOfPasswordPrompts=1','-o','StrictHostKeyChecking=accept-new',
-                     '-o','ControlMaster=no','-o','ControlPath=none',account+'@'+TARGET,'true']
+                     '-o','NumberOfPasswordPrompts=1','-o','StrictHostKeyChecking='+('yes' if windows else 'accept-new'),
+                     '-o','ControlMaster=no','-o','ControlPath=none']
+            if windows:command+=['-o','UserKnownHostsFile='+str(known_hosts),'-o','GlobalKnownHostsFile=/dev/null']
+            command += [account+'@'+target,'true']
             try:
                 result=subprocess.run(command,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,
                                       stderr=subprocess.PIPE,env=env,start_new_session=True,text=True,timeout=4)
@@ -44,7 +56,7 @@ def run(mode, preflight=False):
             except subprocess.TimeoutExpired:
                 results.append({'account':account,'timeout':True})
             time.sleep(.2)
-    print(json.dumps({'mode':mode,'source_ip':expected,'target_ip':TARGET,'attempts':results,
+    print(json.dumps({'mode':mode,'source_ip':expected,'target_ip':target,'attempts':results,
                       'note':'Failed-password counts must be verified from victim logs; SSH protections may reject connections early.'},indent=2))
 
 if __name__=='__main__':
@@ -52,6 +64,7 @@ if __name__=='__main__':
     parser.add_argument('--mode',choices=['approved','unapproved','scope-violation'],required=True)
     parser.add_argument('--preflight',action='store_true')
     parser.add_argument('--execute',action='store_true')
+    parser.add_argument('--lab-config',type=Path,help='Operator-prepared lab profile; never model text')
     args=parser.parse_args()
     if not args.execute and not args.preflight: parser.error('Explicit --execute required; approved mode also needs an active approved plan')
-    run(args.mode,args.preflight)
+    run(args.mode,args.preflight,lab=json.loads(args.lab_config.read_text()) if args.lab_config else None)

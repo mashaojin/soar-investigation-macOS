@@ -2,6 +2,8 @@
 
 Start from a healthy lab, active collector, Ollama and one Telegram-enabled monitor. Keep the monitor running for all scenarios. Check the dashboard response mode: dry run is the initial default; live mode performs an actual approved temporary block.
 
+For Windows guest preparation, profile-selected client staging and current verification limits, use [Windows setup](WINDOWS.md). The Mac commands below retain their UTM defaults.
+
 ## Prepare clients
 
 Create `~/soc-demo` in both client VMs, then run on the Mac:

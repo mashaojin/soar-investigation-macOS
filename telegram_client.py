@@ -30,7 +30,7 @@ class Credentials:
 def load_credentials(policy):
     token = os.environ.get("SOC_TELEGRAM_BOT_TOKEN")
     chat = os.environ.get("SOC_TELEGRAM_CHAT_ID")
-    if not token or not chat:
+    if (not token or not chat) and policy.get('credentials_source'):
         values = {}
         tree = ast.parse(Path(policy["credentials_source"]).read_text())
         for node in tree.body:

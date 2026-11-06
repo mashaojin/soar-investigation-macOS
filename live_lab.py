@@ -66,7 +66,8 @@ def current_rehearsal_incident(incident_id, *, now=None):
     investigation = metadata.get('investigation', {})
     auth = investigation.get('authentication', {})
     checks = auth.get('coverage_checks', {})
-    if (metadata.get('engine') != 'ollama_direct' or metadata.get('model') != 'gemma4:e4b'
+    from lab_config import MAC
+    if (metadata.get('engine') != 'ollama_direct' or metadata.get('model') != MAC['ollama']['model']
             or investigation.get('origin') != 'live_read_only'
             or report.get('verdict') != 'SUSPICIOUS' or report.get('coverage') != 'observed_window'
             or auth.get('coverage') != 'observed_window' or auth.get('limited') is not False
@@ -304,6 +305,9 @@ def execute(client, identity):
 
 
 if __name__ == "__main__":
+    from lab_config import load_profile
+    if load_profile(root=HERE)['platform']!='macos-utm':
+        raise SystemExit('Standalone UTM live pilot is Mac-only; use the guarded monitor with an explicitly provisioned platform adapter')
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=["prepare", "check", "run"])
     parser.add_argument('--incident-id', help='Fresh current incident; uses an isolated session DB and strict live evidence checks')

@@ -65,6 +65,8 @@ def audit(db, request_id, kind, detail, now):
 
 
 def plan_for(evidence, policy):
+    if policy.get('experimental_assessment'):
+        raise ValueError('Experimental AI requires human review; response plans are disabled')
     if policy["mode"] not in ('dry_run', 'live'):
         raise ValueError("Unsupported response mode")
     source = str(ipaddress.ip_address(evidence["source_ip"]))
@@ -79,9 +81,19 @@ def plan_for(evidence, policy):
     duration = policy["duration_seconds"]
     if type(duration) is not int or not 1 <= duration <= 3600:
         raise ValueError("Invalid proposed block duration")
-    if policy['mode']=='live' and (source not in ('192.168.64.4','192.168.64.8') or destination!='192.168.64.6' or duration!=60):
-        raise ValueError('Live guard supports only the explicitly allowed SSH lab clients and 60-second rollback')
+    if policy['mode']=='live':
+        from lab_config import load_profile,sources
+        lab=load_profile(policy)
+        if lab['platform']=='windows-hyperv':
+            from windows_response import check_policy
+            check_policy(policy,lab)
+        if source not in sources(lab) or destination!=lab['victim']['ip'] or duration!=60:
+            raise ValueError('Live guard supports only the explicitly allowed SSH lab clients and 60-second rollback')
     rule = ["deny", "from", source, "to", destination, "port", "22", "proto", "tcp"]
+    if policy['mode']=='live' and lab['platform']=='windows-hyperv':
+        return dict(mode='live',source_ip=source,destination_ip=destination,port=22,protocol='tcp',duration_seconds=60,
+                    transport='windows-ssh-helper',helper_config_hash=policy['windows_response']['config_hash'],
+                    helper_hash=policy['windows_response']['helper_hash'],apply_operation='apply',rollback_operation='rollback')
     return {"mode": policy['mode'], "source_ip": source, "destination_ip": destination,
             "port": 22, "protocol": "tcp", "duration_seconds": duration,
             "apply_argv": ["sudo", "-n", "/usr/sbin/ufw", "insert", "1"] + rule,
@@ -89,6 +101,8 @@ def plan_for(evidence, policy):
 
 
 def bound_plan(evidence, report, metadata, policy, now):
+    from experimental_assessment import experimental_metadata
+    if experimental_metadata(metadata):raise ValueError('Unverified experimental assessment cannot authorize a response plan')
     plan=plan_for(evidence,policy)
     if policy['mode']=='live':
         from live_response import validate_live_evidence
@@ -104,6 +118,9 @@ def evidence_context(metadata, evidence):
              'target_port':evidence.get('destination_port')}
     try:
         saved=json.loads(metadata or '{}')
+        from experimental_assessment import experimental_metadata
+        if experimental_metadata(saved):context['model_qualification']='experimental_unverified'
+        if saved.get('human_approved_live'):context['model_qualification']='operator_accepted_unqualified'
         traces=saved.get('tool_trace',[])
         direct=saved.get('investigation')
         if saved.get('engine')=='ollama_direct' and direct:
@@ -206,6 +223,7 @@ def verdict_display(verdict):
 
 def message_for(row):
     row=dict(row)
+    experimental=json.loads(row.get('context') or '{}').get('model_qualification')=='experimental_unverified'
     report = present_report(json.loads(row["report"]))
     if row['plan'] and (report.get('scenario')=='ssh_investigation' or json.loads(row['plan']).get('mode')=='live'):
         return ssh_action_message(row,report)
@@ -226,8 +244,9 @@ def message_for(row):
         text += "Report only — no action eligible under the lab policy.\n"
         if report.get('recommended_action')=='REQUEST_MORE_EVIDENCE':
             text += 'AI requests more evidence. No additional collection or firewall action runs automatically.\n'
-    if not row['plan'] and (report.get('recommended_action')=='REQUEST_MORE_EVIDENCE' or report.get('verdict')=='INSUFFICIENT_EVIDENCE'):
+    if not row['plan'] and (experimental or report.get('recommended_action')=='REQUEST_MORE_EVIDENCE' or report.get('verdict')=='INSUFFICIENT_EVIDENCE'):
         return dict(chat_id=row['chat_id'],text='🟡 Manual review needed on the dashboard.\n'
+            +('Experimental AI — unverified; response actions disabled.\n' if experimental else '')
             +incident_header(row)
             +'Reason: '+report['reason']+'\nhttp://127.0.0.1:8765/#incident='+row['incident_id'])
     analyst_label = "AI explanation"
@@ -279,13 +298,15 @@ def ssh_action_message(row,report):
     if context.get('unexpected_accounts'):
         facts.append('accounts outside approved scope: '+', '.join(context['unexpected_accounts']))
     minutes=plan['duration_seconds']/60
-    duration=(str(int(minutes))+' minutes' if minutes.is_integer() else str(plan['duration_seconds'])+' seconds')
+    duration=('1 minute' if minutes==1 else str(int(minutes))+' minutes' if minutes.is_integer() else str(plan['duration_seconds'])+' seconds')
     expiry=datetime.fromtimestamp(row['expires_at'],timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
     text=(f'<b>{title}</b>\n\nSource: <code>{escape(plan["source_ip"])}</code>\n'
           f'Target: <code>{escape(plan["destination_ip"])}:{plan["port"]}</code>\n'
           f'Evidence: {escape("; ".join(facts))}\n')
     if context.get('failed_accounts'):
         text+='Failed accounts: '+escape(', '.join(f'{k}: {v}' for k,v in context['failed_accounts'].items()))+'\n'
+    if context.get('model_qualification')=='operator_accepted_unqualified':
+        text+='Model quality unqualified — operator accepted; verify the evidence before approving.\n'
     text+=(f'AI assessment: <b>{escape(verdict_display(report["verdict"]))}</b>\n\n'
            f'<b>Do you authorize blocking this source from accessing the victim’s SSH service for {duration}?</b>\n\n'
            + ('<b>LIVE FIREWALL ACTION — approval will automatically apply a real 60-second SSH block. Ubuntu arms rollback before applying the deny. Keep the victim running.</b>\n' if live else '<b>DRY RUN — approval records a simulation only. No firewall rules will change.</b>\n') +
@@ -324,7 +345,8 @@ def deliver_one(db_path, client, identity, *, now=None):
         row=attach_incident_label(db,row)
         payload=message_for(row);review_notice=None
         report=json.loads(row['report'])
-        if not row['plan'] and (report.get('recommended_action')=='REQUEST_MORE_EVIDENCE' or report.get('verdict')=='INSUFFICIENT_EVIDENCE'):
+        experimental=json.loads(row['context'] or '{}').get('model_qualification')=='experimental_unverified'
+        if not row['plan'] and (experimental or report.get('recommended_action')=='REQUEST_MORE_EVIDENCE' or report.get('verdict')=='INSUFFICIENT_EVIDENCE'):
             incident=attach(db,load_incident(db,row['incident_id']))
             if incident.get('analysis_status')=='manual_review':
                 token=secrets.token_hex(12)
@@ -510,7 +532,7 @@ def tick(db_path, policy, client, identity):
         if query.get("id"):
             try:
                 client.call("answerCallbackQuery", {"callback_query_id": query["id"],
-                    "text": {"approved":"YES recorded — see the incident response status", "denied":"NO recorded — report only", "review_benign":"Benign review saved — no firewall action", "review_suspicious":"Suspicious review saved — no firewall action", "review_needs_more_evidence":"More evidence needed — case remains open", "review_changed":"Incident or review changed — use dashboard", "review_expired":"Review buttons expired — use dashboard", "review_unavailable":"Review already recorded — see dashboard"}.get(outcome,"Request unavailable or invalid")})
+                    "text": {"approved":"YES recorded — see the incident response status", "denied":"NO recorded — report only", "review_benign":"Benign review saved — no firewall action", "review_suspicious":"Suspicious review saved — no firewall action", "review_needs_more_evidence":"More evidence needed — case remains open", "review_changed":"Incident or review changed — use dashboard", "review_expired":"Review buttons expired — use dashboard", "review_unavailable":"Review already recorded — see dashboard", "live_block_denied":"Block denied — report only. Human conclusion unchanged.", "live_block_unavailable":"Live block unavailable: review-only mode. Separate live setup and authorization required."}.get(outcome,"Request unavailable or invalid")})
             except TelegramError:
                 pass
     actions = execute_dry_run(db_path, policy) if policy['mode']=='dry_run' else 0

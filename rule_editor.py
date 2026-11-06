@@ -19,8 +19,15 @@ class RuleEditor:
     def remote(self,request):
         if not (self.root/'rule-editor-enabled.json').exists():
             raise ValueError('Victim rule helper is not provisioned for this dashboard root.')
-        result=subprocess.run(['ssh','-o','BatchMode=yes','-o','ConnectTimeout=5','victim@192.168.64.6',
-            'sudo -n /usr/bin/python3 /usr/local/libexec/soc-rule-editor.py'],
+        from lab_config import load_profile
+        from ssh_transport import command
+        lab=load_profile(root=self.root)
+        if lab['platform']=='windows-hyperv':
+            receipt=json.loads((self.root/'rule-editor-enabled.json').read_text())
+            if receipt.get('victim_ip')!=lab['victim']['ip'] or receipt.get('platform')!='windows-hyperv':
+                raise ValueError('Windows rule-helper provisioning has not been verified for this victim')
+        remote='sudo -n /usr/bin/python3 '+('-I ' if lab['platform']=='windows-hyperv' else '')+'/usr/local/libexec/soc-rule-editor.py'
+        result=subprocess.run(command(lab,'victim',remote),
             input=encode(request),capture_output=True,text=True,timeout=150)
         if result.returncode: raise RuntimeError('Victim helper unavailable: '+result.stderr[-1000:])
         if len(result.stdout.encode())>65536: raise ValueError('Oversized helper response')

@@ -168,6 +168,7 @@ class DirectValidationTests(unittest.TestCase):
 
 class TransportTests(unittest.TestCase):
     def call(self,value,settings=None):
+        if isinstance(value,dict):value=dict(prompt_eval_count=100,eval_count=40,**value)
         raw=json.dumps(value).encode() if isinstance(value,dict) else value
         response=MagicMock(status=200)
         response.isclosed.side_effect=[False,False]

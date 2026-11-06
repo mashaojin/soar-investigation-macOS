@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "platform": "macos-utm",
+  "display_timezone": "America/Vancouver",
+  "victim": {
+    "ip": "192.168.64.6",
+    "user": "victim",
+    "vm": "Victim"
+  },
+  "trust_client": {
+    "ip": "192.168.64.8",
+    "user": "trust-client",
+    "vm": "Trust-Client"
+  },
+  "attacker": {
+    "ip": "192.168.64.4",
+    "user": "kali",
+    "vm": "Kali Linux"
+  },
+  "management_ips": [
+    "192.168.64.1"
+  ],
+  "ssh_port": 22,
+  "block_duration_seconds": 60,
+  "ssh": {
+    "transport": "native",
+    "identity_file": null,
+    "known_hosts_file": null
+  },
+  "utmctl": "/Applications/UTM.app/Contents/MacOS/utmctl",
+  "ollama": {
+    "endpoint": "http://127.0.0.1:11434",
+    "model": "gemma4:e4b",
+    "transport": "http",
+    "num_ctx": 65536,
+    "num_predict": 1024
+  }
+}

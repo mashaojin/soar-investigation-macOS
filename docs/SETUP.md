@@ -1,6 +1,8 @@
 # Setup and configuration
 
-## 1. Match the lab topology
+For Windows/WSL2/Hyper-V, follow [the Windows guide](WINDOWS.md). The topology, guest-agent and UFW instructions below describe the preserved Mac/UTM profile.
+
+## 1. Match the Mac/UTM lab topology
 
 The current live demonstration expects UTM VMs named `Victim`, `Kali Linux`, and `Trust-Client` with addresses `.6`, `.4`, and `.8` on `192.168.64.0/24`. The victim SSH account is `victim`. These identities appear in bounded helpers as well as example configuration. Retargeting the lab requires reviewing code, policy and tests together.
 

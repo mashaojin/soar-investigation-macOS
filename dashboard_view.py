@@ -17,19 +17,22 @@ def document_key(plan):
     return hashlib.sha256((str(Path(path).resolve())+'\0'+digest).encode()).hexdigest()[:32]
 
 
-def plan_view(plan, now=None):
+def plan_view(plan, now=None, lab=None):
+    from lab_config import load_profile,validate_profile
+    lab=validate_profile(lab) if lab is not None else load_profile()
     now=now or datetime.now(timezone.utc)
     result=dict(plan)
     start,end=timestamp(plan['start']),timestamp(plan['end'])
     result['timing']='upcoming' if now<start else 'active' if now<end else 'expired'
     source=plan['source_ips'][0]
     command=None
-    if (plan['approval_status']=='approved' and source=='192.168.64.8'
-            and plan['target_ip']=='192.168.64.6' and plan['target_port']==22
+    if (plan['approval_status']=='approved' and source==lab['trust_client']['ip']
+            and plan['target_ip']==lab['victim']['ip'] and plan['target_port']==22
             and set(plan['allowed_accounts'])=={'soc_test'} and plan['maximum_failed_attempts']>=6):
         command='python3 ~/soc-demo/ssh_demo_client.py --mode approved --execute'
+        if lab['platform']=='windows-hyperv':command+=' --lab-config ~/soc-demo/lab.local.json'
     result['run_instructions']={
-        'vm':{'192.168.64.8':'Trust-Client Ubuntu','192.168.64.4':'Kali Linux'}.get(source,'Source VM'),
+        'vm':{lab['trust_client']['ip']:lab['trust_client']['vm'],lab['attacker']['ip']:lab['attacker']['vm']}.get(source,'Source VM'),
         'command':command, 'start':plan['start'],'end':plan['end'],
         'waiting_until':(end+timedelta(seconds=30)).isoformat(),
         'scope_note':'Run once within the permitted window. Use only the listed accounts and stay within the total attempt limit.',
@@ -37,20 +40,20 @@ def plan_view(plan, now=None):
     return result
 
 
-def authorization(incident,plans,now,plan_error=None):
+def authorization(incident,plans,now,plan_error=None,lab=None):
     metadata=incident.get('metadata',{})
     direct=metadata.get('investigation')
     if metadata.get('engine')=='ollama_direct' and direct:
         evidence=direct['plan_evidence']
         plan=evidence['plan']
-        return {'source':'recorded','plan':plan_view(plan,now) if plan else None,
+        return {'source':'recorded','plan':plan_view(plan,now,lab) if plan else None,
                 'checks':evidence['checks'],'scope_comparison':evidence['scope_comparison']}
     for call in incident.get('metadata',{}).get('tool_trace',[]):
         if call.get('tool')=='get_approved_test_plan' and isinstance(call.get('result'),dict):
             evidence=call['result']
             if 'plan' in evidence:
                 plan=evidence['plan']
-                return {'source':'recorded','plan':plan_view(plan,now) if plan else None,
+                return {'source':'recorded','plan':plan_view(plan,now,lab) if plan else None,
                         'checks':evidence.get('checks',{}),
                         'scope_comparison':evidence.get('scope_comparison',{})}
     # Never attach a newer registry plan to a completed historical assessment.
@@ -61,14 +64,14 @@ def authorization(incident,plans,now,plan_error=None):
     try:
         context=incident_context(incident['incident_id'],incident['evidence'])
         plan=recorded_plan(incident['evidence'],plans) if scope(incident['evidence']) else select_plan(context,plans)
-        return {'source':'scheduling','plan':plan_view(plan,now) if plan else None,'checks':{}}
+        return {'source':'scheduling','plan':plan_view(plan,now,lab) if plan else None,'checks':{}}
     except (ValueError,KeyError,TypeError):
         return {'source':'unavailable','plan':None,'checks':{},'error':'Correlation or authorization scope needs review'}
 
 
-def incident_view(incident,plans,now=None,plan_error=None):
+def incident_view(incident,plans,now=None,plan_error=None,lab=None):
     now=now or datetime.now(timezone.utc)
-    auth=authorization(incident,plans,now,plan_error)
+    auth=authorization(incident,plans,now,plan_error,lab)
     analysis=incident.get('analysis_status',incident.get('status'))
     approval=incident.get('approval') or {}
     response=approval.get('status')
@@ -110,8 +113,8 @@ def incident_view(incident,plans,now=None,plan_error=None):
     elif deadline and now<deadline: code,label='waiting','Waiting for approved plan / log arrival' if auth.get('plan') else 'Waiting for correlation window / log arrival'
     else: code,label='queued','Queued for AI assessment'
     details={'human_resolved':'The operator’s conclusion is recorded separately from the AI assessment. No firewall action was authorized by this review.',
-             'manual_review':('Gemma recorded an assessment and requested more evidence. No additional evidence collection or firewall response runs automatically.' if more_evidence else 'The investigation needs human review. This workflow status is separate from any recorded AI verdict.'),
-             'investigating':'The worker is collecting SSH evidence or requesting a direct Gemma assessment. These phases are not separately recorded.',
+             'manual_review':('The AI recorded an assessment and requested more evidence. No additional evidence collection or firewall response runs automatically.' if more_evidence else 'The investigation needs human review. This workflow status is separate from any recorded AI verdict.'),
+             'investigating':'The worker is collecting SSH evidence or requesting a direct AI assessment. These phases are not separately recorded.',
              'waiting':'The complete evidence window must close before assessment.',
              'queued':'Waiting for the worker and collection catch-up; this page does not assert monitor health.',
              'notified':'A report was delivered. No response approval was required.',

@@ -98,7 +98,9 @@ class ExperimentStore:
             db.execute("UPDATE comparisons SET status='interrupted',updated_at=? WHERE status IN ('queued','running')",(now(),))
 
     def state(self):
-        from ollama_analyst import OPTIONS,MODEL
+        from ollama_analyst import model_config
+        from lab_config import runtime_settings
+        configured,options=model_config(runtime_settings(self.root))
         with closing(sqlite3.connect(self.path)) as db:
             prompts=[dict(id=i,text=t,created_at=c,label=l) for i,t,c,l in db.execute('SELECT * FROM prompts ORDER BY created_at DESC LIMIT 50')]
             jobs=[dict(id=i,status=s,created_at=c,result=json.loads(r)) for i,s,c,r in db.execute('SELECT id,status,created_at,result FROM comparisons ORDER BY created_at DESC LIMIT 20')]
@@ -108,7 +110,7 @@ class ExperimentStore:
             for arm in job['result'].get('arms',[]):
                 arm['display_report']=present_report(arm.get('report'))
         return dict(active=active_instruction(self.root),prompts=prompts,comparisons=jobs,
-            python=python_context(),model=dict(name=MODEL,options=OPTIONS),
+            python=python_context(),model=dict(name=configured['model'],options=options),
             rule=json.loads(cached[0]) if cached else None)
 
     def save_prompt(self,values):
@@ -152,7 +154,9 @@ class ExperimentStore:
 
     def start_comparison(self,values):
         if not isinstance(values,dict) or set(values)!={'incident_id','prompt_id'}: raise ValueError('Choose a saved incident and candidate prompt version.')
-        from ollama_analyst import INSTRUCTION,make_prompt,OPTIONS,MODEL
+        from ollama_analyst import INSTRUCTION,make_prompt,model_config
+        from lab_config import runtime_settings
+        settings=runtime_settings(self.root);configured,options=model_config(settings)
         sample=next((s for s in self.saved_samples() if s['incident_id']==values['incident_id']),None)
         if sample is None: raise ValueError('No complete saved SSH evidence snapshot for this incident.')
         with closing(sqlite3.connect(self.path)) as db:
@@ -163,7 +167,8 @@ class ExperimentStore:
             raise ValueError('The original instruction cannot be reconstructed exactly; use an incident with recorded prompt provenance.')
         make_prompt(sample['payload'],instruction=row[0])
         snapshot=dict(sample,baseline=baseline,candidate=dict(id=values['prompt_id'],text=row[0],label=row[1]),
-                      evidence_hash=sha(encode(sample['payload'])),python=python_context(),model=MODEL,options=OPTIONS,
+                      evidence_hash=sha(encode(sample['payload'])),python=python_context(),model=configured['model'],options=options,
+                      model_settings=settings,
                       rule_provenance=sample['metadata'].get('rule_provenance',{'status':'Historical rule hash unavailable; original alert signature/revision only.'}))
         i=secrets.token_hex(12)
         with closing(sqlite3.connect(self.path)) as db,db:
@@ -188,7 +193,7 @@ class ExperimentStore:
                 prompt=make_prompt(snapshot['payload'],instruction=snapshot[name]['text'])
                 arm=dict(name=name,prompt_id=snapshot[name]['id'],prompt_label=snapshot[name]['label'])
                 try:
-                    envelope=(self.runner or ollama_report)(prompt,dict(investigation=snapshot['investigation']))
+                    envelope=(self.runner or ollama_report)(prompt,dict(snapshot.get('model_settings',{}),investigation=snapshot['investigation']))
                     arm['raw_output']=envelope['text']
                     arm['metadata']={k:v for k,v in envelope.items() if k!='text'}
                     arm['report']=validate_assessment(envelope['text'],snapshot['payload'],snapshot['investigation'])

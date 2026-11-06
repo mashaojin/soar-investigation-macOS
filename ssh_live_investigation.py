@@ -33,7 +33,7 @@ def ready_after(evidence, plans_path):
             timestamp(incident['start'])+timedelta(seconds=120))
 
 
-def prepare_live_job(incident_id, evidence, plans_path, collector=collect_auth):
+def prepare_live_job(incident_id, evidence, plans_path, collector=None, *, lab_profile=None):
     incident = incident_context(incident_id,evidence)
     plans = load_plans(plans_path)
     saved = scope(evidence)
@@ -44,7 +44,7 @@ def prepare_live_job(incident_id, evidence, plans_path, collector=collect_auth):
     request = {'source_ip':incident['source_ip'],'target_ip':incident['target_ip'],
                'start':saved['evidence_start'] if saved else plan['start'] if plan else (start-timedelta(seconds=60)).isoformat(),
                'end':saved['end'] if saved else plan['end'] if plan else (start+timedelta(seconds=90)).isoformat()}
-    auth = collector(request)
+    auth = collector(request) if collector is not None else collect_auth(request,lab=lab_profile)
     if any(auth.get(k) != v for k,v in request.items()):
         raise ValueError('Authentication evidence attribution mismatch')
     if auth.get('coverage') not in ('journal_query_complete','partial','observed_window'):

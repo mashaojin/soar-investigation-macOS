@@ -42,7 +42,10 @@ def initialize(db):
 
 
 def socket_path(config):
-    key = hashlib.sha256(config["ssh_target"].encode()).hexdigest()[:16]
+    identity=config['ssh_target']
+    if config.get('lab_profile'):
+        identity=json.dumps({'target':identity,'profile':config['lab_profile']},sort_keys=True)
+    key = hashlib.sha256(identity.encode()).hexdigest()[:16]
     folder = Path(tempfile.gettempdir()) / f"soc-ssh-{os.getuid()}"
     folder.mkdir(mode=0o700, exist_ok=True)
     stat = folder.lstat()
@@ -54,6 +57,15 @@ def socket_path(config):
 def ssh_command(config, remote_code):
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*@[A-Za-z0-9][A-Za-z0-9.-]*", config["ssh_target"]):
         raise ValueError("Expected SSH target user@host")
+    if config.get('lab_profile'):
+        from lab_config import load_profile
+        from ssh_transport import command
+        lab=load_profile(config)
+        if config['ssh_target']!=lab['victim']['user']+'@'+lab['victim']['ip']:
+            raise ValueError('Collector SSH target differs from trusted lab profile')
+        argv=command(lab,'victim','python3 -c '+shlex.quote(remote_code))
+        return argv[:-2]+['-o','ControlMaster=auto','-o','ControlPersist=60',
+                         '-o','ControlPath='+socket_path(dict(config,lab_profile=lab))]+argv[-2:]
     return ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
             "-o", "ConnectTimeout=5", "-o", "ServerAliveInterval=5",
             "-o", "ServerAliveCountMax=2", "-o", "ControlMaster=auto",

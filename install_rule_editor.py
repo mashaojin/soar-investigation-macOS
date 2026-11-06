@@ -9,6 +9,9 @@ ROOT=Path(__file__).resolve().parent
 
 
 def main():
+    from lab_config import load_profile
+    if load_profile(root=ROOT)['platform']!='macos-utm':
+        raise ValueError('Windows helper requires separately reviewed SSH provisioning; UTM installer is Mac-only')
     source=(ROOT/'soc_rule_helper.py').read_bytes();expected=hashlib.sha256(source).hexdigest()
     payload=base64.b64encode(source).decode()
     code='''import base64,hashlib,json,os,pathlib,subprocess

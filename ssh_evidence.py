@@ -6,15 +6,17 @@ from pathlib import Path
 import shlex
 import subprocess
 from ssh_auth_reader import validate_request
+from lab_config import load_profile,sources
+from ssh_transport import command as ssh_command
 
 
-def collect_auth(request):
+def collect_auth(request, lab=None):
     validate_request(request)
-    if request['target_ip'] != '192.168.64.6':
+    lab=load_profile({'lab_profile':lab}) if lab is not None else load_profile()
+    if request['target_ip'] != lab['victim']['ip'] or request['source_ip'] not in sources(lab):
         raise ValueError('Only the configured Ubuntu lab victim is supported')
     payload = base64.b64encode(json.dumps(request).encode()).decode()
-    command = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
-               'victim@192.168.64.6', 'python3 - ' + shlex.quote(payload)]
+    command = ssh_command(lab,'victim','python3 - '+shlex.quote(payload))
     script = Path(__file__).with_name('ssh_auth_reader.py').read_text()
     result = subprocess.run(command, input=script, text=True, capture_output=True, timeout=20)
     if result.returncode:

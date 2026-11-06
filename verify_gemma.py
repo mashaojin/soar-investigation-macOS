@@ -8,10 +8,19 @@ from ssh_investigation import build_job
 from ssh_scenarios import ROOT, load_scenario
 
 
-def run(output, fixtures=ROOT):
+def run(output, fixtures=ROOT, settings=None, instruction=None):
+    from lab_config import runtime_settings
+    from ollama_analyst import model_config
+    settings=settings or runtime_settings(Path(__file__).parent)
+    configured,options=model_config(settings)
+    from experiment_store import active_instruction
+    if instruction is None:instruction=active_instruction(Path(__file__).parent)
+    else:
+        import hashlib
+        instruction=dict(id=hashlib.sha256(instruction.encode()).hexdigest(),text=instruction,label='Explicit evaluation candidate; not activated')
     receipt={'started_at':datetime.now(timezone.utc).isoformat(),
-             'mode':'synthetic_fixture_actual_base_model','model':'gemma4:e4b',
-             'telegram_messages':0,'firewall_actions':0,'attacks_launched':0,'results':[],'passed':False}
+             'mode':'synthetic_fixture_actual_base_model','model':configured['model'],'options':options,
+             'prompt_version':instruction,'telegram_messages':0,'firewall_actions':0,'attacks_launched':0,'results':[],'passed':False}
     for path in sorted(fixtures.glob('*.json')):
         case,_=load_scenario(path)
         _,job=build_job(path)
@@ -20,14 +29,17 @@ def run(output, fixtures=ROOT):
              'window_start':case['incident']['start'],'alert_count':case['incident']['alert_count']},job)
         row={'scenario':case['id'],'assessment_data':payload,'investigation':job,'passed':False}
         try:
-            prompt=make_prompt(payload)
-            envelope=ollama_report(prompt,{'investigation':job})
+            prompt=make_prompt(payload,instruction=instruction['text'])
+            envelope=ollama_report(prompt,dict(settings,investigation=job))
             row['metadata']={k:v for k,v in envelope.items() if k!='text'}
             row['raw_report']=envelope['text']
             row['report']=validate_assessment(envelope['text'],payload,job)
+            row['valid_structured_response']=True
             row['expected_verdict']=case['expected'].get('verdict','BENIGN' if case['id']=='approved_test' else 'SUSPICIOUS')
-            row['passed']=row['report']['verdict']==row['expected_verdict']
-        except Exception as exc: row['error']=str(exc)[:3000]
+            row['verdict_matches_reference']=row['report']['verdict']==row['expected_verdict']
+            row['security_judgment_review']='Required: matching a verdict label does not certify its explanation.'
+            row['passed']=row['verdict_matches_reference']
+        except Exception as exc: row.update(error=str(exc)[:3000],valid_structured_response=False,verdict_matches_reference=False)
         receipt['results'].append(row)
         output.write_text(json.dumps(receipt,indent=2)+'\n')
         print(json.dumps({k:row.get(k) for k in ['scenario','passed','report','error']}),flush=True)
@@ -38,5 +50,18 @@ def run(output, fixtures=ROOT):
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output',type=Path,default=Path(__file__).with_name('verification-gemma-direct.json'))
+    parser.add_argument('--instruction-file',type=Path,help='Evaluate a candidate without activating it')
+    parser.add_argument('--claims-first',action='store_true',help='Evaluate schema ordering without changing facts or verdict choices')
+    parser.add_argument('--model',help='Explicit synthetic-evaluation model override; never changes active configuration')
+    parser.add_argument('--threads',type=int,choices=range(1,5),help='Explicit synthetic-evaluation CPU threads; never changes active configuration')
     args=parser.parse_args()
-    raise SystemExit(0 if run(args.output) else 1)
+    from lab_config import runtime_settings
+    settings=runtime_settings(Path(__file__).parent)
+    if args.model or args.threads:
+        from copy import deepcopy
+        settings=deepcopy(settings)
+        if args.model:settings['lab_profile']['ollama']['model']=args.model
+        if args.threads:settings['lab_profile']['ollama']['num_thread']=args.threads
+        settings['ollama']=dict(settings['lab_profile']['ollama'])
+    if args.claims_first:settings['ollama']=dict(settings['ollama'],claims_first=True)
+    raise SystemExit(0 if run(args.output,settings=settings,instruction=args.instruction_file.read_text() if args.instruction_file else None) else 1)

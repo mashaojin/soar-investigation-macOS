@@ -19,8 +19,31 @@ from assessment_facts import VERSION
 from ssh_correlation import VERSION as CORRELATION_VERSION
 
 
-def run(config, db_path, runtime, *, duration=None, response_policy=None):
+def run(config, db_path, runtime, *, duration=None, response_policy=None, analysis_enabled=True):
+    if not analysis_enabled and response_policy and response_policy['mode']=='live':
+        raise ValueError('Collection-only operation cannot enable a live response worker')
     config = dict(config)
+    from lab_config import load_profile
+    from incident_labels import configure_timezone
+    lab=load_profile(runtime,Path(db_path).resolve().parent)
+    from experimental_assessment import qualification
+    experiment=qualification(dict(runtime,lab_profile=lab),response_policy)
+    from human_approved_live import authorization
+    authorization(dict(runtime,lab_profile=lab),response_policy)
+    if response_policy and response_policy.get('human_approved_live')!=runtime.get('human_approved_live'):
+        raise ValueError('Runtime and policy live authorizations differ')
+    configure_timezone(lab['display_timezone'])
+    if runtime.get('lab_profile'):
+        from lab_config import sources,protected
+        if config.get('destination_ip')!=lab['victim']['ip'] or set(config.get('source_ips',[]))!=set(sources(lab)):
+            raise ValueError('Collection scope differs from trusted lab profile')
+        if response_policy is not None and (response_policy.get('victim_ip')!=lab['victim']['ip']
+                or set(response_policy.get('allowed_attacker_ips',[]))!=set(sources(lab))
+                or not set(protected(lab))<=set(response_policy.get('protected_ips',[]))):
+            raise ValueError('Response scope/protected management differs from trusted lab profile')
+        runtime=dict(runtime,lab_profile=lab)
+        config['lab_profile']=lab
+        if response_policy is not None:response_policy=dict(response_policy,lab_profile=lab)
     if runtime.get('ssh_enrichment'):
         config['approved_plans'] = runtime['approved_plans']
     stop = threading.Event()
@@ -32,7 +55,7 @@ def run(config, db_path, runtime, *, duration=None, response_policy=None):
         record(db_path,instance,component,status,**detail)
     def heartbeat_loop():
         while not stop.is_set():
-            try: health('monitor','running',assessment_version=VERSION,correlation_version=CORRELATION_VERSION,response_mode=response_policy['mode'] if response_policy else 'disabled')
+            try: health('monitor','running',assessment_version=VERSION,correlation_version=CORRELATION_VERSION,response_mode=response_policy['mode'] if response_policy else 'disabled',**experiment)
             except sqlite3.Error: pass
             stop.wait(5)
     def emit(kind, **fields):
@@ -97,7 +120,7 @@ def run(config, db_path, runtime, *, duration=None, response_policy=None):
         while not stop.is_set():
             try:
                 health('live_worker','ready')
-                reconcile(db_path)
+                reconcile(db_path,policy=response_policy)
                 if telegram_owned.is_set() and run_one(db_path,response_policy,identity):
                     emit('live_response',action='Worker finished; outcome recorded in dashboard')
             except (OSError,ValueError,RuntimeError,sqlite3.Error,subprocess.SubprocessError) as exc:
@@ -112,8 +135,11 @@ def run(config, db_path, runtime, *, duration=None, response_policy=None):
         except BlockingIOError:
             raise RuntimeError("A monitor already holds this database lock") from None
         recovered = recover_interrupted_analyses(db_path)
-        health('monitor','running',assessment_version=VERSION,correlation_version=CORRELATION_VERSION,response_mode=response_policy['mode'] if response_policy else 'disabled')
+        from analyst import initialize as initialize_analyses
+        initialize_analyses(db_path)
+        health('monitor','running',assessment_version=VERSION,correlation_version=CORRELATION_VERSION,response_mode=response_policy['mode'] if response_policy else 'disabled',**experiment)
         health('telegram','starting' if response_policy else 'disabled')
+        if not analysis_enabled:health('analyst','deferred',reason='Collection only; model assessment deliberately paused')
         heartbeat=threading.Thread(target=heartbeat_loop,name='soc-heartbeat',daemon=True)
         heartbeat.start()
         if recovered: emit("interrupted_assessments", count=recovered, action="Manual review; no automatic retry")
@@ -131,6 +157,9 @@ def run(config, db_path, runtime, *, duration=None, response_policy=None):
         try:
             while not stop.is_set() and (deadline is None or time.monotonic() < deadline):
                 if caught_up.is_set():
+                    if not analysis_enabled:
+                        stop.wait(0.2)
+                        continue
                     try:
                         result = analyze_next(db_path, runtime)
                     except sqlite3.Error as exc:
@@ -165,6 +194,7 @@ if __name__ == "__main__":
     parser.add_argument("--runtime", default="runtime.ssh.live.local.json")
     parser.add_argument("--duration", type=float, help="Optional bounded verification duration, seconds")
     parser.add_argument("--telegram", action="store_true", help="Enable the single Telegram handler and configured response worker")
+    parser.add_argument('--collection-only',action='store_true',help='Collect/correlate only; leave incidents pending without making model calls')
     parser.add_argument("--response-config", default="response.local.json")
     args = parser.parse_args()
     config = json.loads(Path(args.config).read_text())
@@ -179,4 +209,4 @@ if __name__ == "__main__":
             parser.error('Live lab mode requires 60-second rollback and an explicit activation time')
     raise SystemExit(run(config, str(Path(args.db).resolve()),
                          json.loads(Path(args.runtime).read_text()), duration=args.duration,
-                         response_policy=response_policy))
+                         response_policy=response_policy,analysis_enabled=not args.collection_only))

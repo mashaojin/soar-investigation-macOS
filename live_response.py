@@ -14,18 +14,28 @@ from assessment_facts import VERSION, has_observations, validate_claims
 
 
 def validate_live_evidence(evidence, report, metadata, policy, now):
+    from experimental_assessment import experimental_metadata
+    if policy.get('experimental_assessment') or experimental_metadata(metadata):
+        raise ValueError('Experimental unverified AI cannot enter live response')
+    from lab_config import load_profile
+    lab=load_profile(policy)
+    if policy.get('human_approved_live'):
+        from human_approved_live import authorization
+        authorization(policy,policy)
+        if metadata.get('human_approved_live')!=policy['human_approved_live']:
+            raise ValueError('Assessment is not bound to the current operator-accepted model activation')
     start=datetime.fromisoformat(evidence['window_start'].replace('Z','+00:00'))
     enabled=datetime.fromisoformat(policy['live_enabled_after'].replace('Z','+00:00'))
     if start.tzinfo is None or enabled.tzinfo is None or start<enabled or not 0<=now-start.timestamp()<=1800:
         raise ValueError('Live responses require a new incident after live-mode activation, under 30 minutes old')
     job=metadata.get('investigation',{}); auth=job.get('authentication',{})
     checks=auth.get('coverage_checks',{})
-    if (metadata.get('engine')!='ollama_direct' or metadata.get('model')!='gemma4:e4b'
+    if (metadata.get('engine')!='ollama_direct' or metadata.get('model')!=lab['ollama']['model']
         or job.get('origin')!='live_read_only' or report.get('verdict')!='SUSPICIOUS'
         or report.get('coverage')!='observed_window' or auth.get('coverage')!='observed_window'
         or auth.get('limited') is not False
         or any(checks.get(k) is not True for k in ('query_not_limited','retained_entry_before_start','root_service_records','window_elapsed'))
-        or auth.get('source_ip') not in policy['allowed_attacker_ips'] or auth.get('source_ip')!=evidence.get('source_ip') or auth.get('target_ip')!='192.168.64.6'
+        or auth.get('source_ip') not in policy['allowed_attacker_ips'] or auth.get('source_ip')!=evidence.get('source_ip') or auth.get('target_ip')!=lab['victim']['ip']
         or metadata.get('assessment_version')!=VERSION or report.get('assessment_version')!=VERSION
         or report.get('recommended_action')!='REQUEST_BLOCK_APPROVAL'
         or type(auth.get('failed_password_count')) is not int or auth['failed_password_count']<0 or not has_observations(auth)
@@ -126,9 +136,17 @@ class LabExecutor:
                        capture_output=True,timeout=15,check=True)
 
 
-def verify_receipt(state,run_id,source='192.168.64.4'):
+def executor_for(source,policy,recovery=False):
+    from lab_config import load_profile
+    if load_profile(policy)['platform']=='windows-hyperv':
+        from windows_response import WindowsExecutor
+        return WindowsExecutor(source,policy,recovery=recovery)
+    return LabExecutor(source)
+
+
+def verify_receipt(state,run_id,source='192.168.64.4',destination='192.168.64.6'):
     if (state.get('run_id')!=run_id or state.get('source')!=source
-        or state.get('destination')!='192.168.64.6' or state.get('port')!=22 or state.get('duration_seconds')!=60):
+        or state.get('destination')!=destination or state.get('port')!=22 or state.get('duration_seconds')!=60):
         raise ValueError('Guest receipt does not match approved guard scope')
     tag='soc-lab-'+run_id
     if state.get('stage')=='rolled_back' and (not state.get('firewall_after') or tag in state['firewall_after']):
@@ -139,12 +157,15 @@ def run_one(db_path,policy,identity,executor=None,*,wait=time.sleep):
     if policy['mode']!='live': return False
     work=claim(db_path,policy,identity)
     if work is None: return False
-    row,result=work; request=row['request_id']; run_id=result['run_id']; source=result['plan']['source_ip']; executor=executor or LabExecutor(source)
+    row,result=work; request=row['request_id']; run_id=result['run_id']; source=result['plan']['source_ip']; executor=executor or executor_for(source,policy)
     dispatched=False
     try:
         result['baseline']=executor.probe()
         if result['baseline'].get('reachable') is not True or result['baseline'].get('actual_source')!=source:
             raise ValueError('Source baseline connectivity not verified; no dispatch')
+        result['management_baseline']=executor.management()
+        if result['management_baseline'].get('reachable') is not True:
+            raise ValueError('Protected management access not verified before dispatch')
         # Revalidate immediately before the one irreversible dispatch boundary.
         with closing(sqlite3.connect(db_path,timeout=10)) as db:
             current=db.execute('''SELECT i.evidence,a.report,a.metadata FROM incidents i JOIN analyses a ON a.incident_id=i.incident_id
@@ -163,7 +184,7 @@ def run_one(db_path,policy,identity,executor=None,*,wait=time.sleep):
             try: state=executor.read(run_id)
             except (OSError,ValueError,subprocess.SubprocessError):
                 wait(2); continue
-            verify_receipt(state,run_id,source)
+            verify_receipt(state,run_id,source,result['plan']['destination_ip'])
             if state['stage']=='applied' and not blocked_checked:
                 result['applied_state']=state
                 result['blocked_probe']=executor.probe()
@@ -189,7 +210,7 @@ def run_one(db_path,policy,identity,executor=None,*,wait=time.sleep):
     return True
 
 
-def reconcile(db_path,executor=None):
+def reconcile(db_path,executor=None,policy=None):
     """After interruption, inspect victim state; never redispatch an action."""
     supplied_executor=executor
     with closing(sqlite3.connect(db_path,timeout=10)) as db,db:
@@ -198,12 +219,12 @@ def reconcile(db_path,executor=None):
     for row in rows:
         result=json.loads(row['result'])
         source=result['plan']['source_ip']
-        executor=supplied_executor or LabExecutor(source)
+        executor=supplied_executor or executor_for(source,policy or {},recovery=True)
         try:
             if row['status']=='live_preparing':
                 result['error']='Interrupted before dispatch; action not resumed'
                 save(db_path,row['request_id'],'live_failed',result); continue
-            state=executor.read(row['run_id']); verify_receipt(state,row['run_id'],source)
+            state=executor.read(row['run_id']); verify_receipt(state,row['run_id'],source,result['plan']['destination_ip'])
             result['reconciled_state']=state
             if state['stage']=='rolled_back':
                 result['recovery_probe']=executor.probe()

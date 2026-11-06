@@ -37,3 +37,6 @@ recovery-audit/
 /*-backup*/
 /*.png
 /release-check.json
+
+# Local runtime logs, private archives, release checks and review checkout
+/local-artifacts/

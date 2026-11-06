@@ -7,6 +7,11 @@ import sqlite3
 ZONE=ZoneInfo('America/Vancouver')
 
 
+def configure_timezone(name='America/Vancouver'):
+    global ZONE
+    ZONE=ZoneInfo(name)
+
+
 def initialize(db):
     db.execute('''CREATE TABLE IF NOT EXISTS incident_numbers(
         incident_id TEXT PRIMARY KEY,incident_number TEXT NOT NULL UNIQUE,
@@ -72,7 +77,7 @@ def time_display(value):
     if not stamp:return 'Unavailable (historical record)'
     local=parse(stamp).astimezone(ZONE)
     suffix=' (retained window start)' if value.get('incident_time_source')=='retained_window_start' else ''
-    return local.strftime('%Y-%m-%d %H:%M:%S %Z (UTC%z)')+' · America/Vancouver'+suffix
+    return local.strftime('%Y-%m-%d %H:%M:%S %Z (UTC%z)')+' · '+ZONE.key+suffix
 
 
 def header(value):

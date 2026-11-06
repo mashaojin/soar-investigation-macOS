@@ -20,7 +20,7 @@ $('python-settings').replaceChildren(configurationTable([
 ['Log arrival allowance',d.python.arrival_allowance_seconds+' seconds','Waits after the window ends so delayed records can arrive before analysis.'],
 ['Pre-alert evidence',d.python.unapproved_pre_alert_context_seconds+' seconds','Includes up to this much earlier SSH evidence, since login attempts can precede the first alert.'],
 ['Approved-test evidence','Full approved plan window','Checks SSH evidence across the plan’s start and end times; does not separately investigate before or after the plan.'],
-['Assessment roles','Gemma verdict · Python validation','Gemma assesses the evidence. Python checks the result and enforces separate approval for eligible firewall actions.']
+['Assessment roles','Model verdict · Python validation','The configured model assesses the evidence. Python checks the result and enforces separate approval for eligible firewall actions.']
 ]));
 $('model-settings').replaceChildren(configurationTable([
 ['Model',d.model.name,'Local model used to assess the supplied evidence.'],

@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "platform": "windows-hyperv",
+  "display_timezone": "America/Vancouver",
+  "victim": {"ip": "172.18.250.163", "user": "victim", "vm": "Victim"},
+  "trust_client": {"ip": "172.18.247.16", "user": "trust-client", "vm": "Trust-Client"},
+  "attacker": {"ip": "172.18.247.105", "user": "kali", "vm": "Kali Linux"},
+  "management_ips": ["172.18.240.1"],
+  "ssh_port": 22,
+  "block_duration_seconds": 60,
+  "ssh": {
+    "transport": "windows-stdio",
+    "identity_file": "~/.ssh/soc_pipeline_windows",
+    "known_hosts_file": "~/.ssh/soc_pipeline_windows_known_hosts",
+    "windows_powershell": "pwsh.exe"
+  },
+  "ollama": {
+    "endpoint": "http://127.0.0.1:11434",
+    "transport": "windows-stdio",
+    "model": "gemma3:1b",
+    "num_ctx": 8192,
+    "num_predict": 1024
+  }
+}

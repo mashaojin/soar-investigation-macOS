@@ -51,6 +51,19 @@ def check_prose(reason,job):
     if plan: observed_counts.add(plan['maximum_failed_attempts'])
     for count in re.findall(r'\b(\d+)\s+(?:observed\s+)?failed\s+(?:password(?:s)?|login(?:s)?|authentication)(?:\s+attempts?)?',reason,re.I):
         if int(count) not in observed_counts: raise ValueError('Reason invents a failed-password count')
+    for count in re.findall(r'\b(\d+)\s+(?:observed\s+)?successful\s+(?:logins?|authentication)',reason,re.I):
+        if int(count)!=auth['successful_login_count']:raise ValueError('Reason invents a successful-login count')
+    # Direct observed contradictions only; this is still not full prose entailment.
+    ips=re.findall(r'\b(?:\d{1,3}\.){3}\d{1,3}\b',reason)
+    if len(ips)>=2 and len(set(ips))==1 and re.search(r'\bdifferent (?:IP )?address',reason,re.I):
+        raise ValueError('Reason invents an IP-address mismatch')
+    outside=r"['\"]?\s+(?:is|was)\s+outside\s+(?:the\s+)?(?:approved|test)\s+plan\b"
+    if plan:
+        for account in set(auth['failed_accounts'])|set(auth.get('successful_accounts',{})):
+            if account in plan['allowed_accounts'] and re.search(re.escape(account)+outside,reason,re.I):
+                raise ValueError('Reason calls an explicitly permitted account outside the plan')
+    elif re.search(r'\b(?:is|was)\s+outside\s+(?:the\s+)?(?:approved|test)\s+plan\b',reason,re.I) or re.search(r'\bpresence of (?:an? |the )?unexpected accounts?\b',reason,re.I):
+        raise ValueError('Reason invents account-scope comparisons without a matching plan')
     if auth['successful_login_count'] and re.search(r'\bno successful (?:logins?|authentication)',reason,re.I):
         raise ValueError('Reason denies observed successful authentication')
     if plan and re.search(r'\bno matching approved (?:test )?plan',reason,re.I):

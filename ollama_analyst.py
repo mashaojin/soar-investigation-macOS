@@ -6,9 +6,11 @@ import time
 import hashlib
 from copy import deepcopy
 from assessment_facts import VERSION, CLAIM_SCHEMA, validate_claims, check_prose, has_observations, observed_claims
+from ollama_transport import request_json
+from lab_config import MAC
 
 
-MODEL = 'gemma4:e4b'
+MODEL = MAC['ollama']['model']
 OPTIONS = {'temperature': 0, 'top_k': 64, 'top_p': 0.95,
            'num_ctx': 65536, 'num_predict': 1024}
 SCHEMA = {'type': 'object', 'additionalProperties': False,
@@ -110,12 +112,32 @@ def ollama_report(prompt, settings):
         return _ollama_report(prompt,settings)
 
 
+def model_config(settings):
+    from lab_config import load_profile
+    lab=load_profile(settings)
+    configured=dict(lab['ollama'])
+    if lab['platform']=='windows-hyperv':configured.setdefault('num_thread',2)
+    override=settings.get('ollama',{})
+    if settings.get('lab_profile') and any(k in configured and v!=configured[k] for k,v in override.items()):
+        raise ValueError('Runtime Ollama settings differ from trusted lab profile; review both explicitly')
+    configured.update(override)
+    import re
+    if not re.fullmatch(r'[A-Za-z0-9_.:/-]{1,128}',configured['model']):raise ValueError('Invalid configured model identity')
+    options=dict(OPTIONS,num_ctx=configured.get('num_ctx',OPTIONS['num_ctx']),num_predict=configured.get('num_predict',OPTIONS['num_predict']))
+    if type(options['num_ctx']) is not int or not 2048<=options['num_ctx']<=65536:raise ValueError('Invalid context capacity')
+    if type(options['num_predict']) is not int or not 1<=options['num_predict']<=1024:raise ValueError('Invalid output budget')
+    if lab['platform']=='windows-hyperv':
+        threads=configured['num_thread']
+        if type(threads) is not int or not 1<=threads<=4:raise ValueError('CPU thread count must be between 1 and 4')
+        options['num_thread']=threads
+    return configured,options
+
+
 def _ollama_report(prompt, settings):
     if len(prompt.encode()) > 16000:
         raise ValueError('Assessment input exceeds budget')
-    configured = settings.get('ollama', {})
-    if configured.get('model', MODEL) != MODEL:
-        raise ValueError('Active analyst requires installed base gemma4:e4b')
+    configured,options=model_config(settings)
+    model=configured['model']
     schema=deepcopy(DVWA_SCHEMA if prompt.startswith('Interpret the supplied sanitized DVWA') else SCHEMA)
     job=settings.get('investigation')
     fact_mode='not_applicable'
@@ -125,39 +147,25 @@ def _ollama_report(prompt, settings):
         fact_mode='schema_bound_observations'
     elif prompt.startswith(INSTRUCTION):
         raise ValueError('SSH generation requires its bound investigation facts')
-    body = {'model': MODEL, 'messages': [{'role': 'user', 'content': prompt}],
-            'stream': False, 'think': False, 'format': schema, 'options': OPTIONS,
+    required_output_bytes=None
+    if fact_mode=='schema_bound_observations':
+        minimum=dict(verdict='INSUFFICIENT_EVIDENCE',reason='x',recommendations=['x','x'],
+                     evidence_refs=['E1','E2','E3','P1'],claims=observed_claims(job),recommended_action='REQUEST_BLOCK_APPROVAL')
+        required_output_bytes=len(json.dumps(minimum,separators=(',',':')).encode())+64
+        if required_output_bytes>options['num_predict']:
+            raise ValueError('Required structured facts cannot fit bounded output; retain evidence for manual review')
+        if configured.get('claims_first') is True:
+            # Ordering only: the same observed const, schema and free verdicts.
+            schema['properties']={'claims':schema['properties']['claims'],**{k:v for k,v in schema['properties'].items() if k!='claims'}}
+            schema['required']=['claims']+[k for k in schema['required'] if k!='claims']
+    body = {'model': model, 'messages': [{'role': 'user', 'content': prompt}],
+            'stream': False, 'think': False, 'truncate':False,'shift':False,
+            'format': schema, 'options': options,
             'keep_alive': '5m'}
-    # Fixed loopback endpoint and no proxy, conversation, tool definitions, or retries.
+    # Operator-configured origin; no proxy, conversation, tools or retries.
     started = time.monotonic()
-    deadline = started + 120
-    connection = http.client.HTTPConnection('127.0.0.1', 11434, timeout=120)
-    try:
-        connection.connect()
-        transport = connection.sock
-        transport.settimeout(max(0.001,deadline-time.monotonic()))
-        connection.request('POST', '/api/chat', json.dumps(body).encode(),
-                           {'Content-Type': 'application/json'})
-        transport.settimeout(max(0.001,deadline-time.monotonic()))
-        response = connection.getresponse()
-        if response.status != 200:
-            raise ValueError('Ollama returned HTTP '+str(response.status))
-        chunks, size = [], 0
-        while not response.isclosed():
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise TimeoutError('Ollama exceeded 120-second wall-clock budget')
-            transport.settimeout(remaining)
-            block = response.read1(min(4096, 65537-size))
-            if not block: break
-            chunks.append(block)
-            size += len(block)
-            if size > 65536:
-                raise ValueError('Oversized Ollama response')
-        result = json.loads(b''.join(chunks))
-    finally:
-        connection.close()
-    if result.get('model') != MODEL or result.get('done') is not True or result.get('done_reason') != 'stop':
+    result=request_json(configured,'/api/chat',body,timeout=120)
+    if result.get('model') != model or result.get('done') is not True or result.get('done_reason') != 'stop':
         raise ValueError('Ollama output incomplete, truncated, or model identity mismatch')
     message = result.get('message', {})
     if message.get('tool_calls') or message.get('thinking'):
@@ -165,14 +173,21 @@ def _ollama_report(prompt, settings):
     text = message.get('content')
     if not isinstance(text, str) or len(text.encode()) > 4096:
         raise ValueError('Invalid or oversized model content')
-    return {'text': text, 'engine': 'ollama_direct', 'model': MODEL, 'request_count': 1, 'request_attempts': 1,
+    prompt_tokens=result.get('prompt_eval_count');output_tokens=result.get('eval_count')
+    if (type(prompt_tokens) is not int or prompt_tokens<=0 or prompt_tokens+options['num_predict']>options['num_ctx']
+            or type(output_tokens) is not int or not 0<output_tokens<=options['num_predict']):
+        raise ValueError('Complete prompt and reserved output do not fit verified context budget, or token accounting is missing')
+    return {'text': text, 'engine': 'ollama_direct', 'model': model, 'request_count': 1, 'request_attempts': 1,
             'assessment_version': VERSION, 'fact_generation':fact_mode,
             'prompt_hash':hashlib.sha256(prompt.encode()).hexdigest(),
             'schema_hash':hashlib.sha256(json.dumps(schema,sort_keys=True).encode()).hexdigest(),
-            'input_bytes': len(prompt.encode()), 'max_output_tokens': OPTIONS['num_predict'],
-            'options': OPTIONS, 'truncated': False, 'done_reason': result['done_reason'],
+            'input_bytes': len(prompt.encode()), 'max_output_tokens': options['num_predict'],
+            'options': options, 'truncated': False,'input_truncation_disabled':True,'context_shift_disabled':True,
+            'required_output_bound_bytes':required_output_bytes,'context_budget_verified':True,'done_reason': result['done_reason'],
             'elapsed_seconds': round(time.monotonic()-started, 3),
-            'prompt_tokens': result.get('prompt_eval_count'), 'output_tokens': result.get('eval_count')}
+            'prompt_tokens': prompt_tokens, 'output_tokens': output_tokens,
+            'prompt_cached_tokens':result.get('prompt_eval_cached_count'),
+            'load_duration_ns':result.get('load_duration'),'inference_duration_ns':result.get('eval_duration')}
 
 
 def validate_assessment(text, payload, investigation=None):

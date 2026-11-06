@@ -70,7 +70,9 @@ def snapshot(root=ROOT):
     from approved_plans import load_plans
     from dashboard_view import incident_view, plan_view
     now=datetime.now(timezone.utc)
-    result={'updated_at':now.isoformat()}
+    from lab_config import load_profile
+    lab=load_profile(root=root)
+    result={'updated_at':now.isoformat(),'display_timezone':lab['display_timezone'],'platform':lab['platform']}
     try:
         policy=json.loads((root/'response.local.json').read_text())
         result['response_policy']={'mode':policy['mode'],'duration_seconds':policy['duration_seconds']}
@@ -80,21 +82,22 @@ def snapshot(root=ROOT):
         result['history']={'available':False,'incidents':[],'counts':{},'note':'State temporarily unavailable. Retry shortly.'}
     try:
         config=json.loads((root/'runtime.ssh.live.local.json').read_text())
+        result['experimental_assessment']=bool(config.get('experimental_assessment'))
         plan_path=Path(config['approved_plans'])
         if not plan_path.is_absolute(): plan_path=root/plan_path
         plans=load_plans(plan_path)
     except (OSError,ValueError,KeyError,TypeError):
         plans=[]
         result['plan_error']='Dashboard plan registry unavailable; review its configuration.'
-    result['plans']=[plan_view(p,now) for p in plans]
+    result['plans']=[plan_view(p,now,lab) for p in plans]
     eligible=[p for p in result['plans'] if p['approval_status']=='approved' and p['timing'] in ('active','upcoming')]
     result['next_plan']=min(eligible,key=lambda p:(p['timing']!='active',p['start'])) if eligible else None
     for incident in result['history']['incidents']:
-        incident['view']=incident_view(incident,plans,now,result.get('plan_error'))
+        incident['view']=incident_view(incident,plans,now,result.get('plan_error'),lab)
     try:
         live=json.loads((root/'live.ssh.local.json').read_text())
         result['editor_options']={'source_ips':live['source_ips'], 'target_ip':live['destination_ip'],
-                                  'maximum_window_minutes':10}
+                                  'preferred_source_ip':lab['trust_client']['ip'],'maximum_window_minutes':10}
     except (OSError, ValueError, KeyError): result['editor_options']=None
     return result
 
@@ -195,6 +198,9 @@ class DashboardServer(ThreadingHTTPServer):
 
 def make_server(root=ROOT, port=8765):
     from plan_editor import PlanEditor
+    from lab_config import load_profile
+    from incident_labels import configure_timezone
+    configure_timezone(load_profile(root=root)['display_timezone'])
     server=DashboardServer(('127.0.0.1',port),Handler)
     server.root=Path(root).resolve()
     server.csrf_token=secrets.token_hex(32)

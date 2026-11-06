@@ -34,7 +34,10 @@ def initialize(db):
         message_id INTEGER,detail TEXT NOT NULL,UNIQUE(incident_id,revision));
         CREATE TABLE IF NOT EXISTS review_choices(
         notification_id TEXT PRIMARY KEY,bot_key TEXT NOT NULL,chat_id INTEGER NOT NULL,user_id INTEGER NOT NULL,
-        expected_review_id TEXT,expires_at INTEGER NOT NULL,used INTEGER NOT NULL DEFAULT 0);''')
+        expected_review_id TEXT,expires_at INTEGER NOT NULL,used INTEGER NOT NULL DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS review_response_decisions(
+        notification_id TEXT PRIMARY KEY,decision TEXT NOT NULL,operator_id INTEGER NOT NULL,
+        created_at INTEGER NOT NULL);''')
 
 
 def binding(incident):
@@ -149,8 +152,10 @@ def validate_identity(values):
 
 def reason_for_review(incident):
     report=incident.get('report') or {};error=incident.get('error') or ''
-    if report.get('recommended_action')=='REQUEST_MORE_EVIDENCE':return 'Gemma requested more evidence before a response decision.'
-    if report.get('verdict')=='INSUFFICIENT_EVIDENCE':return 'Gemma could not reach a conclusive assessment from the available evidence.'
+    from experimental_assessment import experimental_metadata
+    if report and experimental_metadata(incident.get('metadata')):return 'The AI assessment is unverified and requires an independent human conclusion.'
+    if report.get('recommended_action')=='REQUEST_MORE_EVIDENCE':return 'The AI requested more evidence before a response decision.'
+    if report.get('verdict')=='INSUFFICIENT_EVIDENCE':return 'The AI could not reach a conclusive assessment from the available evidence.'
     if 'No authentication outcomes' in error:return 'A network alert was detected, but no matching SSH authentication outcomes were found in the retained evidence window.'
     if 'Authorization changed' in error or 'plan changed' in error:return 'The test-plan scope changed during the investigation and needs an operator check.'
     if 'coverage' in error.lower():return 'The available authentication evidence did not establish the required log coverage.'
@@ -159,7 +164,9 @@ def reason_for_review(incident):
 
 def notification_message(incident,identity,notification_id=None):
     from incident_labels import header
+    from experimental_assessment import experimental_metadata
     text=('🟡 Manual review needed on the dashboard.\n'
+        +('Experimental AI — unverified; response actions disabled.\n' if experimental_metadata(incident.get('metadata')) else '')
         +header(incident)+
         f"Reason: {reason_for_review(incident)}\n"
         f"http://127.0.0.1:8765/#incident={incident['incident_id']}")
@@ -174,7 +181,7 @@ def notification_message(incident,identity,notification_id=None):
 
 def handle_review_callback(db,query,identity,now):
     """Uses the poller's transaction; never creates response requests or executes actions."""
-    match=re.fullmatch(r'hr:([bse]):([a-f0-9]{24})',query.get('data',''))
+    match=re.fullmatch(r'hr:([bseld]):([a-f0-9]{24})',query.get('data',''))
     if not match:return 'ignored'
     choice,identifier=match.groups()
     # Tables are initialized before the poller begins its transaction.
@@ -188,6 +195,22 @@ def handle_review_callback(db,query,identity,now):
         or message.get('message_id')!=row['message_id']):return 'unauthorized'
     if row['used'] or row['status']!='sent':return 'review_unavailable'
     if now>=row['expires_at']:return 'review_expired'
+    if choice in ('l','d'):
+        try:
+            incident=attach(db,load_incident(db,row['incident_id']))
+            if (incident['revision']!=row['revision'] or binding(incident)!=row['snapshot_hash']
+                    or incident['review_context']['expected_review_id']!=row['expected_review_id']):
+                return 'review_changed'
+        except (ValueError,KeyError):return 'review_changed'
+        if (incident.get('report') or {}).get('verdict')!='SUSPICIOUS':return 'review_unavailable'
+        if db.execute('SELECT 1 FROM review_response_decisions WHERE notification_id=?',(identifier,)).fetchone():
+            return 'live_block_denied'
+        if choice=='d':
+            db.execute('INSERT INTO review_response_decisions VALUES(?,?,?,?)',
+                (identifier,'denied',operator['id'],now))
+            return 'live_block_denied'
+        # Informational only: never consumes review, creates approval or dispatches.
+        return 'live_block_unavailable'
     conclusion={'b':'BENIGN','s':'SUSPICIOUS','e':'NEEDS_MORE_EVIDENCE'}[choice]
     try:
         ReviewService('.').save(dict(incident_id=row['incident_id'],revision=row['revision'],snapshot_hash=row['snapshot_hash'],
