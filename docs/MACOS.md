@@ -82,7 +82,13 @@ The helper needs password authentication to reach the SSH journal. Review the ef
 sudo sshd -T | grep -E 'passwordauthentication|kbdinteractiveauthentication|permitrootlogin'
 ```
 
-For this isolated lab, configure password authentication as intended in the existing SSH configuration or an appropriate early-loaded drop-in, retaining public-key administration and keeping root login disabled. An example lab drop-in is:
+For this isolated lab, configure password authentication in an early-loaded Ubuntu drop-in, retaining public-key administration and keeping root login disabled:
+
+```sh
+sudoedit /etc/ssh/sshd_config.d/00-soar-lab.conf
+```
+
+Enter:
 
 ```text
 PasswordAuthentication yes
@@ -119,9 +125,17 @@ RULE
 sudo chmod 0644 /etc/suricata/rules/ssh_bruteforce.rules
 ```
 
-Back up `/etc/suricata/suricata.yaml` before editing it. In this fresh, dedicated lab configuration, make the existing relevant sections agree with:
+Back up the existing file once, then edit it on **Victim**:
+
+```sh
+sudo cp -n /etc/suricata/suricata.yaml /etc/suricata/suricata.yaml.before-soar-lab
+sudoedit /etc/suricata/suricata.yaml
+```
+
+In this fresh, dedicated lab configuration, make the existing relevant sections agree with:
 
 ```yaml
+default-log-dir: /var/log/suricata
 default-rule-path: /etc/suricata/rules
 rule-files:
   - ssh_bruteforce.rules
@@ -225,7 +239,13 @@ ssh -o BatchMode=yes victim@192.168.64.6 'id; printf "%s\n" "$SSH_CONNECTION"; t
 
 **Checkpoint:** there is no password/host-key prompt, the connection source is the intended `.1` management address, EVE is readable and the journal contains readable root-origin records (`_UID: "0"`). A command returning no rows is not successful coverage. Start a fresh session after changing groups; a cached SSH master may retain old group membership. If necessary, stop the lab's old SSH master deliberately and reconnect before proceeding.
 
-Establish the same verified Victim host-key trust from each **client VM** before using its demo helper. For example, make an initial interactive SSH connection after comparing the console fingerprint; authentication can fail, but host identity must be known. The client helper's `accept-new` setting is not a replacement for fingerprint verification.
+Establish the same verified Victim host-key trust from each **client VM** before using its demo helper. On each client, compare the prompt with Victim's console fingerprint:
+
+```sh
+ssh -o StrictHostKeyChecking=ask -o NumberOfPasswordPrompts=0 victim@192.168.64.6 true
+```
+
+With no client administration key configured, authentication may end in Permission denied; this step establishes host identity rather than successful access. The helper's `accept-new` setting is not a replacement for fingerprint verification.
 
 ## 5. Verify UTM guest execution and stage clients
 
