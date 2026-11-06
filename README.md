@@ -18,6 +18,7 @@ The model assesses evidence. Python owns collection, validation and response pol
 - [Dashboard and Telegram screenshots](#screenshots)
 - [macOS lab requirements](#macos-lab-requirements)
 - [Quick start](#quick-start)
+- [Dashboard features and settings](#dashboard-guide)
 - [Configuration and credentials](#configuration-and-credentials)
 - [Three manual scenarios](#three-manual-scenarios)
 - [Telegram decisions and live response](#telegram-decisions)
@@ -244,6 +245,60 @@ python3 monitor.py --config live.ssh.local.json --runtime runtime.ssh.live.local
 
 **Checkpoint:** response mode is dry run, the configured bot is exclusively owned by this monitor, and dashboard component health shows a polling Telegram handler. Follow the three scenarios below and inspect each actual report/decision. Keep this one monitor running through responses.
 
+## Dashboard guide
+
+The dashboard is an investigation workspace and a set of explicit controls—not a service launcher. Check monitor/component health and response mode before using it. The complete [dashboard guide](docs/DASHBOARD.md) explains every panel, supported field, validation state and change boundary.
+
+### Read an incident
+
+Select an item in **Incident history**, then inspect its number/revision, source/target, AI verdict, investigation stages, **Observed facts**, **Python scope comparisons**, **Authorization context** and **Telegram and response**. AI verdict, workflow state and human conclusion are separate: a Suspicious assessment can still require review. Stage progress is completion of recorded steps, not a prediction of model runtime. **Refresh** reads saved state; it does not start collection or retry an action.
+
+### Create an approved test plan
+
+1. Click **New test plan**. Enter the configured source/Victim, permitted account such as `soc_test`, total failed-attempt limit, operator and a future whole-minute window lasting **1–10 minutes**.
+2. Check the form's timezone, click **Validate**, and review the exact source, target, accounts, limit and start/end times. Validation saves a draft, not an authorization.
+3. Click **Approve plan before its start**. Confirm approval and retained run instructions, then execute the test manually on the named VM during that window.
+4. Use **Plans → Plan history → View plan / Show run instructions** to inspect a version. **Repeat with new times** creates a new draft that needs new validation and approval.
+
+The failure limit applies across the whole plan window; it is not a fixed AI Suspicious threshold. Overlapping approved scope is rejected. **Cancel draft** does not revoke an already approved plan. See [test plans](docs/DASHBOARD.md#2-create-validate-and-approve-a-test-plan).
+
+### Change the Suricata rule
+
+First provision the fixed Victim helper using the reviewed [Mac setup procedure](docs/MACOS.md#9-optional-dashboard-rule-editor-and-prompt-experiments). The editor writes the file on Victim through that helper; editing a host-side draft does not update the sensor.
+
+1. Open **Settings → Suricata rule → Read current rule from Victim**.
+2. Edit only the supported alert message, threshold `count`/`seconds` and revision; increase `rev` for a change. TCP/22, SYN matching and SID `9001001` remain fixed.
+3. Click **Validate on Victim**, inspect the diff/test result, then deliberately click **Apply validated rule and reload**. Validation alone leaves the active rule unchanged.
+4. Confirm an `active` result and read Victim status again. Use **Restore previous rule and reload** when an editor backup is available; read current status before retrying an uncertain operation.
+
+Applied rules affect future sensor processing. Run fresh manual traffic to test them; historical evidence is not regenerated. See [rule editing and recovery](docs/DASHBOARD.md#4-read-validate-and-apply-a-suricata-rule).
+
+### Save, compare and activate a prompt
+
+1. Open **Settings → Gemma prompt**, note **Active**, choose a **Saved version** and click **Load selected version**.
+2. Edit **Instruction**, give it a **Version label**, then click **Save and validate version**. This stores a candidate; it does not activate it.
+3. Select a **Saved SSH incident** and the saved candidate, then click **Compare original vs selected prompt**. Inspect both new model results, errors and identical evidence hash. Comparisons need a reconstructable original instruction and share the inference queue with live work.
+4. To adopt a candidate, select that saved version and click **Activate selected version**. Verify the **Active** label/hash. Future requests use it; historical and in-flight requests keep their original instruction.
+5. To revert, select a previous saved version and activate it. Merely loading text or closing Settings does not change the active version.
+
+Comparisons collect no new logs, send no Telegram messages and perform no firewall actions. Saving/activating a prompt changes neither Python validators nor response policy. The Mac model remains `gemma4:e4b`; changing instructions is separate from changing/evaluating a model. See [prompt workflow and limitations](docs/DASHBOARD.md#5-save-compare-and-activate-a-prompt).
+
+### Read configuration and complete human review
+
+**Settings → Pipeline configuration** is read only: it explains grouping, log-arrival allowance, pre-alert context, approved evidence scope, model identity and token limits. The current Mac budgets are 65,536 context / 1,024 output tokens; capacity is not per-incident consumption. It is not a Python-code, credential or response-mode editor.
+
+For an incident awaiting review, inspect its evidence, then use **Human review → Reviewer name → Your conclusion → optional Review notes → Save human review**. Benign/Suspicious resolves the human review; Need more evidence keeps it open. **Review history** retains older entries, and **Add follow-up review** records a new conclusion. Human review never overwrites the AI assessment or approves a firewall block. See [human review](docs/DASHBOARD.md#7-record-a-human-review).
+
+| Change | When it takes effect |
+| --- | --- |
+| Approve plan | Only the recorded scope/window; no traffic or response is executed |
+| Apply validated rule | New sensor processing after verified reload |
+| Save prompt | Stored candidate only |
+| Activate selected prompt | New assessment requests |
+| Compare prompts | Two fresh requests on saved evidence only |
+| Save human review | Separate current-snapshot human conclusion |
+| Telegram block approval | Exact eligible request, after independent worker revalidation |
+
 ## Configuration and credentials
 
 | Local file | Purpose |
@@ -432,6 +487,7 @@ A successful model call or valid JSON does not establish a correct security judg
 
 ## Documentation
 
+- [Dashboard controls, test plans, rules, prompts and human review](docs/DASHBOARD.md)
 - [Full macOS / UTM setup and readiness checkpoints](docs/MACOS.md)
 - [Setup overview](docs/SETUP.md)
 - [Three-scenario demonstration](docs/DEMO.md)
