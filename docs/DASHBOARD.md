@@ -206,7 +206,7 @@ When an incident is awaiting human review:
 
 **Add follow-up review** opens another entry after resolution. Reviews are append-only rather than overwriting the original AI report or an older human conclusion. **Send Telegram review notice** queues an incident-bound review notice for the existing monitor's handler; it does not make the dashboard a new bot poller. A running Telegram-enabled monitor is required, and existing sent/uncertain/resolved notices are not simply resent by repeated clicks.
 
-The Telegram conclusion buttons record the same kind of separate human review. A human Suspicious conclusion is not a firewall approval. Need more evidence does not automatically collect another source or make another model request. A changed revision/snapshot or newer review requires refreshing and inspecting the current case; an unresolved active response request must be handled before closing the investigation.
+The Telegram conclusion buttons record the same kind of separate human review. In live mode, a human Suspicious conclusion can trigger a separate Telegram approval request if the incident passes policy. Only the separate live approval can authorize the block. Need more evidence does not automatically collect another source or make another model request. A changed revision/snapshot or newer review requires refreshing and inspecting the current case; an unresolved active response request must be handled before closing the investigation.
 
 ## 8. Know when changes take effect
 

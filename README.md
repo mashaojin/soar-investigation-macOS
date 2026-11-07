@@ -39,6 +39,8 @@ flowchart TD
     H -->|Valid Benign label| I[Report only and optional dashboard review]
     H -->|Suspicious, inconclusive, missing label or error| J[Dashboard and Telegram review]
     J --> K[Record human conclusion]
+    K -->|Suspicious and live policy passes| L[Separate Telegram block approval]
+    L -->|YES| M[Guarded 60-second SSH block and rollback]
 ```
 
 ### Responsibilities
@@ -376,7 +378,11 @@ The helper makes six deliberately failed attempts in two bursts separated by 12 
 
 ## Telegram decisions
 
-### Response approval
+1. Review the evidence and record **Suspicious** in the dashboard or Telegram. This saves your conclusion.
+2. In live mode, the monitor checks the current revision and retained SSH evidence against the response policy. If eligible, Telegram sends a **separate** request with **YES — Approve LIVE 60s block** and **NO — Deny block / report only**.
+3. Only **YES** on the current request can dispatch the guarded block. **NO** or expiry leaves the incident report and human conclusion in place. The dashboard tracks the response and rollback.
+
+Use [macOS live-mode setup](docs/MACOS.md#8-enable-and-verify-live-response) before rehearsing live enforcement. Dry run does not send the new live button. Live eligibility still requires a fresh post-activation incident, a matching assessment provider, an allowlisted source, sufficient retained SSH evidence, and no successful logins. Activity covered by an approved plan remains report only unless the records verify an account-scope violation.
 
 The historical structured-assessment path could produce an eligible firewall approval. New SSH advisory reports use the report-only or review route described above. For historical workflow reference, an eligible request asked:
 
@@ -390,7 +396,7 @@ The historical structured-assessment path could produce an eligible firewall app
 
 Live buttons explicitly say **YES — Approve LIVE 60s block** and **NO — Deny block / report only**. Dry-run buttons explicitly identify the simulation. Test-plan approval is separate from response approval.
 
-The guarded live-response code and its historical receipts remain available for reference. The diagram shows how an authorized structured-response request was executed.
+The diagram shows the worker sequence after a live request is approved.
 
 ```mermaid
 sequenceDiagram
@@ -398,7 +404,7 @@ sequenceDiagram
     participant T as Telegram handler
     participant P as Python live worker
     participant V as Victim helper
-    O->>T: YES on current incident-bound request
+    O->>T: YES on separate incident-bound live request
     T->>P: Record exact authorized decision
     P->>P: Revalidate facts, scope, identity, expiry and revision
     P->>V: One fixed UTM guest-agent dispatch

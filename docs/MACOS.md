@@ -366,7 +366,7 @@ Follow the README's [three manual scenarios](../README.md#three-manual-scenarios
 
 ## 8. Enable and verify live response
 
-This section records the earlier structured-response rehearsal. New SSH advisory reports go to human review and do not queue firewall approvals.
+For a plain-text SSH advisory, record Suspicious in the dashboard or Telegram. Eligible live incidents then get a separate Telegram firewall approval.
 
 Do this only after the dry-run checks and deliberate review of `live_response.py` and `live_lab_guard.py`. Victim must have active UFW, a working root guest-agent path, a functioning systemd timer and no ambiguous existing source-specific rule. Keep guest consoles available and do not suspend/reboot Victim during a block.
 
@@ -385,9 +385,9 @@ print('Live mode selected for new incidents after the recorded activation time.'
 PY
 ```
 
-Restart the same Telegram-enabled monitor with credentials exported. The dashboard and eligible requests must clearly identify **LIVE** mode. The live worker additionally requires fresh current-revision accepted Gemma evidence, observed-window coverage, no successful authentication and a supported recommendation. An approved plan without an observed account-scope violation is report-only under the live policy, even if some other finding concerns the model.
+Restart the same Telegram-enabled monitor with credentials exported. The dashboard and eligible requests must clearly identify **LIVE** mode. The live worker additionally requires a saved Suspicious review, fresh current-revision SSH evidence, observed-window coverage and no successful authentication. An approved plan without an observed account-scope violation is report-only under the live policy, even if some other finding concerns the model.
 
-Run a **new** unapproved Kali scenario after activation. If an eligible block request arrives, inspect its incident, source, target, duration and expiry. Before clicking YES, on **Kali** start an independent observation:
+Run a **new** unapproved Kali scenario after activation and review the recorded evidence. Record **Suspicious** if it supports that conclusion. If a separate block request arrives, inspect its incident, source, target, duration and expiry. Before clicking YES, on **Kali** start an independent observation:
 
 ```sh
 for i in $(seq 1 20); do date +%T; nc -nvz -w 2 192.168.64.6 22; sleep 3; done

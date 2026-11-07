@@ -9,31 +9,45 @@ import sqlite3
 import subprocess
 import time
 
-from response import initialize as response_initialize, audit, bound_plan, canonical, fingerprint, refresh_requests
-from assessment_facts import VERSION, has_observations, validate_claims
+from response import initialize as response_initialize, audit, current_live_plan, canonical, fingerprint, refresh_requests
+from assessment_facts import VERSION, has_observations, observed_claims, validate_claims
 
 
-def validate_live_evidence(evidence, report, metadata, policy, now):
+def validate_live_evidence(evidence, report, metadata, policy, now, *, reviewed=False):
+    if reviewed:
+        from provider_state import validate_binding
+        route=validate_binding(metadata,policy)
+        model_matches=metadata.get('engine')==route['provider']+'_direct'
+    else:
+        model_matches=metadata.get('engine')=='ollama_direct' and metadata.get('model')=='gemma4:e4b'
     start=datetime.fromisoformat(evidence['window_start'].replace('Z','+00:00'))
     enabled=datetime.fromisoformat(policy['live_enabled_after'].replace('Z','+00:00'))
     if start.tzinfo is None or enabled.tzinfo is None or start<enabled or not 0<=now-start.timestamp()<=1800:
         raise ValueError('Live responses require a new incident after live-mode activation, under 30 minutes old')
     job=metadata.get('investigation',{}); auth=job.get('authentication',{})
     checks=auth.get('coverage_checks',{})
-    if (metadata.get('engine')!='ollama_direct' or metadata.get('model')!='gemma4:e4b'
-        or job.get('origin')!='live_read_only' or report.get('verdict')!='SUSPICIOUS'
-        or report.get('coverage')!='observed_window' or auth.get('coverage')!='observed_window'
+    if (not model_matches
+        or job.get('origin')!='live_read_only' or auth.get('coverage')!='observed_window'
         or auth.get('limited') is not False
         or any(checks.get(k) is not True for k in ('query_not_limited','retained_entry_before_start','root_service_records','window_elapsed'))
         or auth.get('source_ip') not in policy['allowed_attacker_ips'] or auth.get('source_ip')!=evidence.get('source_ip') or auth.get('target_ip')!='192.168.64.6'
-        or metadata.get('assessment_version')!=VERSION or report.get('assessment_version')!=VERSION
-        or report.get('recommended_action')!='REQUEST_BLOCK_APPROVAL'
+        or metadata.get('assessment_version')!=VERSION
         or type(auth.get('failed_password_count')) is not int or auth['failed_password_count']<0 or not has_observations(auth)
         or auth.get('successful_login_count')!=0 or 'plan' not in job.get('plan_evidence',{})):
-        raise ValueError('Live response requires a current evidence-checked Gemma assessment, scoped SSH observations and no successful logins')
-    validate_claims(report.get('claims'),job)
+        raise ValueError('Live response requires current scoped SSH observations and no successful logins')
+    if reviewed:
+        if not metadata.get('provider_binding'):
+            raise ValueError('Live response requires the assessment provider binding')
+        claims=observed_claims(job)
+    else:
+        if (report.get('verdict')!='SUSPICIOUS' or report.get('coverage')!='observed_window'
+                or report.get('assessment_version')!=VERSION
+                or report.get('recommended_action')!='REQUEST_BLOCK_APPROVAL'):
+            raise ValueError('Structured response requires an evidence-checked block recommendation')
+        claims=report.get('claims')
+        validate_claims(claims,job)
     # A plan permits only its listed accounts; it does not exempt out-of-scope attempts.
-    if job['plan_evidence']['plan'] is not None and not report['claims']['unexpected_accounts']:
+    if job['plan_evidence']['plan'] is not None and not claims['unexpected_accounts']:
         raise ValueError('Matching approved plan without verified account-scope violation; report only')
 
 
@@ -58,6 +72,7 @@ def save(db_path, request, status, result, now=None):
 
 
 def claim(db_path,policy,identity,now=None):
+    policy={'_provider_root':str(Path(db_path).resolve().parent), **policy}
     now=int(time.time()) if now is None else now
     with closing(sqlite3.connect(db_path,timeout=10)) as db,db:
         db.row_factory=sqlite3.Row; initialize(db); db.execute('BEGIN IMMEDIATE')
@@ -68,13 +83,7 @@ def claim(db_path,policy,identity,now=None):
         rows=db.execute("SELECT * FROM approval_requests WHERE status='approved' AND bot_key=? ORDER BY created_at",(identity['bot_key'],)).fetchall()
         for row in rows:
             try:
-                current=db.execute('''SELECT i.evidence,a.report,a.metadata FROM incidents i JOIN analyses a
-                    ON a.incident_id=i.incident_id AND a.revision=i.revision
-                    WHERE i.incident_id=? AND i.revision=? AND i.status='complete' AND a.status='complete' ''',
-                    (row['incident_id'],row['revision'])).fetchone()
-                if not current or current['report']!=row['report']:
-                    raise ValueError('Incident or report changed')
-                expected=bound_plan(json.loads(current['evidence']),json.loads(current['report']),json.loads(current['metadata']),policy,now)
+                expected=current_live_plan(db,row,policy,now)
                 if (row['approved_by']!=row['user_id'] or row['user_id']!=identity['user_id']
                     or row['chat_id']!=identity['chat_id'] or not row['plan']
                     or canonical(expected)!=row['plan'] or fingerprint(expected)!=row['plan_hash']):
@@ -136,6 +145,7 @@ def verify_receipt(state,run_id,source='192.168.64.4'):
 
 
 def run_one(db_path,policy,identity,executor=None,*,wait=time.sleep):
+    policy={'_provider_root':str(Path(db_path).resolve().parent), **policy}
     if policy['mode']!='live': return False
     work=claim(db_path,policy,identity)
     if work is None: return False
@@ -147,12 +157,9 @@ def run_one(db_path,policy,identity,executor=None,*,wait=time.sleep):
             raise ValueError('Source baseline connectivity not verified; no dispatch')
         # Revalidate immediately before the one irreversible dispatch boundary.
         with closing(sqlite3.connect(db_path,timeout=10)) as db:
-            current=db.execute('''SELECT i.evidence,a.report,a.metadata FROM incidents i JOIN analyses a ON a.incident_id=i.incident_id
-                AND a.revision=i.revision WHERE i.incident_id=? AND i.revision=? AND a.status='complete' AND i.status='complete' ''',
-                (row['incident_id'],row['revision'])).fetchone()
-        if (not current or int(time.time())>=row['expires_at'] or
-            canonical(bound_plan(json.loads(current[0]),json.loads(current[1]),json.loads(current[2]),policy,int(time.time())))!=row['plan']):
-            raise ValueError('Approval expired or assessment changed; no dispatch')
+            now=int(time.time())
+            if now>=row['expires_at'] or canonical(current_live_plan(db,row,policy,now))!=row['plan']:
+                raise ValueError('Approval expired or assessment changed; no dispatch')
         save(db_path,request,'live_executing',result)
         dispatched=True
         # Never resend after this point, even on timeout or restart.
