@@ -78,16 +78,22 @@ The operator can complete a requested review in either place. Review choices rec
 
 ## Screenshots
 
-These are actual screenshots from recorded Mac/UTM lab rehearsals. Different images show different incidents; they are not one continuous replay. The Telegram captures are cropped to the relevant messages.
+These captures come from recorded macOS/UTM lab rehearsals. The dashboard and Telegram images show different incidents.
 
 ### Dashboard
 
-![Mac/UTM dashboard showing incident history, severity, stage progress and completed response](docs/images/dashboard-overview.jpg)
+![SOAR dashboard showing a completed SSH rollback, restored access, and all six incident stages resolved](docs/images/dashboard-live-rollback.jpg)
+
+*Recorded macOS rehearsal. The dashboard shows the Suspicious assessment, human review, separate response approval, and verified rollback.*
 
 The dashboard preserves readable incident numbers, timestamps, grouped alerts, AI assessments, separate human conclusions and response progress. Monitor health is checked by heartbeat, separately from saved database state.
 
 <details>
-<summary>Test-plan editor and incident assessment</summary>
+<summary>AI model settings, test-plan editor, and incident assessment</summary>
+
+![Settings drawer showing the AI prompt, Suricata rule, and AI model selection tabs](docs/images/dashboard-model-settings.jpg)
+
+*The AI model selection panel shows the active provider and model, the synthetic test control, and the activation button.*
 
 ![Test-plan editor showing source, victim, accounts, attempt limit and timing](docs/images/test-plan-editor.jpg)
 
