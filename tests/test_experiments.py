@@ -37,7 +37,7 @@ class ExperimentTests(unittest.TestCase):
 
     def runner(self,prompt,settings):
         self.calls.append((prompt,deepcopy(settings)))
-        return dict(text='Observed attempts fit the approved test scope [E2, P1].',model='gemma4:e4b')
+        return dict(text='Assessment: Benign\nObserved attempts fit the approved test scope [E2, P1].',model='gemma4:e4b')
 
     def test_save_does_not_activate_and_activate_requires_current_version(self):
         base=active_instruction(self.root)
@@ -83,7 +83,7 @@ class ExperimentTests(unittest.TestCase):
             db.execute("INSERT INTO incidents VALUES('saved',1,?,1,'pending')",(encode(self.evidence),))
         with patch('ssh_live_investigation.ready_after',return_value=datetime(2020,1,1,tzinfo=timezone.utc)),patch('ssh_live_investigation.prepare_live_job',return_value=('',self.job)):
             result=analyze_next(self.root/'ssh-live.sqlite3',dict(ssh_enrichment=True,approved_plans='unused'),runner=self.runner)
-        self.assertEqual(result['status'],'manual_review');self.assertIn('Evaluate timing explicitly.',self.calls[0][0])
+        self.assertEqual(result['status'],'complete');self.assertIn('Evaluate timing explicitly.',self.calls[0][0])
         with closing(sqlite3.connect(self.root/'ssh-live.sqlite3')) as db:
             saved=json.loads(db.execute('SELECT metadata FROM analyses').fetchone()[0])
         self.assertEqual(saved['prompt_version']['id'],candidate['id']);self.assertIn('code_hash',saved['python_context'])

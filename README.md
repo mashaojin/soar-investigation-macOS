@@ -6,7 +6,7 @@
 
 This is the original **Mac / UTM / Gemma4** implementation, previously named `soc-pipeline`. The separate [Windows project](https://github.com/mashaojin/soar-investigation-windows) has its own setup, platform adapters and verification limits. This README uses the same organization as that project, but all commands below describe this macOS implementation.
 
-**Suricata → Python correlation and SSH evidence → one bounded AI advisory report → operator review in the dashboard or Telegram.**
+**Suricata → Python correlation and SSH evidence → one bounded AI advisory report → report only or operator review.**
 
 Ollama with Gemma4 is the default. Google Gemini API is optional and requires separate local authorization before new incident evidence can be sent. Python collects evidence and checks the report's length and citation IDs. The operator records the final conclusion. This is an educational lab and runs without Hermes.
 
@@ -36,10 +36,9 @@ flowchart TD
     E --> G[One bounded report through Ollama or Gemini]
     F --> G
     G --> H[Check report length and cited IDs]
-    H -->|Report accepted| I[Read advisory in the dashboard or Telegram]
-    H -->|Report rejected or unavailable| J[Inspect evidence and technical error]
-    I --> K[Record human conclusion]
-    J --> K
+    H -->|Valid Benign label| I[Report only and optional dashboard review]
+    H -->|Suspicious, inconclusive, missing label or error| J[Dashboard and Telegram review]
+    J --> K[Record human conclusion]
 ```
 
 ### Responsibilities
@@ -53,7 +52,15 @@ flowchart TD
 | Python output checks | Bound the text to 4,096 UTF-8 bytes and verify cited IDs exist | Assess whether the reasoning is correct |
 | Operator | Review evidence and record a conclusion in the dashboard or Telegram | Authorize a firewall change through a review button |
 
-The model may describe activity as benign, suspicious or inconclusive. The approved plan, SSH authentication and scope comparisons are supplied as evidence. Python accepts the prose without evaluating the verdict, claims or reasoning. Advisory reports go to review, including reports that suggest blocking.
+The model starts with a standalone plain-text line such as `Assessment: Benign`, `Assessment: Suspicious`, or `Assessment: Insufficient evidence`. Python uses the line for routing and keeps the length and citation checks. The model explains its judgment in prose.
+
+| Assessment outcome | Dashboard | Telegram |
+| --- | --- | --- |
+| Benign | **Report only** with optional human review | Brief report without buttons |
+| Suspicious | **Manual review required** | Review notice with **Benign**, **Suspicious**, and **Need more evidence** |
+| Insufficient evidence, missing or unrecognized label, or assessment error | **Manual review required** | Review notice with the reason and the same review choices |
+
+The operator can complete a requested review in either place. Review choices record a conclusion and cannot approve a firewall block. The new routing applies to future incident revisions. Existing assessments keep their recorded workflow state.
 
 ### What happens to one incident
 
@@ -62,8 +69,8 @@ The model may describe activity as benign, suspicious or inconclusive. The appro
 3. The Mac monitor reads new EVE records over SSH, saves the cursor and groups related alerts. An incident receives a durable internal ID, readable number and revision.
 4. Python waits for its evidence window to close, then reads the scoped `ssh.service` journal and the recorded test-plan authorization. Counts and scope comparisons are supplied as facts.
 5. The selected model receives bounded evidence and writes a plain-text assessment. Python checks that the response fits within the length limit and that any cited IDs exist in the supplied evidence. There is no automatic retry.
-6. The dashboard retains the report and original evidence. With Telegram enabled, the monitor sends a review notice with a short excerpt and incident-bound conclusion buttons.
-7. Record **Benign**, **Suspicious** or **Need more evidence** as a separate human conclusion.
+6. The dashboard retains the report and original evidence. With Telegram enabled, the monitor sends a brief report for Benign or a review notice with incident-bound conclusion buttons for other outcomes.
+7. When review is requested, record **Benign**, **Suspicious** or **Need more evidence** as a separate human conclusion.
 
 **Evidence timing:** unapproved scopes use a fixed **120-second** correlation window, up to **60 seconds** of pre-alert context and a **30-second** arrival allowance. Approved scopes use the entire approved plan window plus the arrival allowance. Authorization boundaries can shorten an unapproved scope. Collection catch-up and inference add further delay. Related runs can become one incident; do not expect one incident for every invocation of the client script.
 
@@ -275,7 +282,7 @@ Open **Settings → AI model selection**. Choose **Ollama** or **Gemini API**, e
 
 Gemini uses a local `GEMINI_API_KEY` or ignored `.env.gemini`. A synthetic check requires a local allowance record. Sending new incident evidence requires a separate opt-in. See the [Gemini setup guide](docs/GEMINI_PROVIDER.md) for commands, version pinning and revocation.
 
-For an incident awaiting review, inspect its evidence, then use **Human review → Reviewer name → Your conclusion → optional Review notes → Save human review**. Benign/Suspicious resolves the human review; Need more evidence keeps it open. **Review history** retains older entries, and **Add follow-up review** records a new conclusion. Human review never overwrites the AI assessment or approves a firewall block. See [human review](docs/DASHBOARD.md#7-record-a-human-review).
+To complete a requested review or optionally review a Benign report, inspect its evidence, then use **Human review → Reviewer name → Your conclusion → optional Review notes → Save human review**. Benign/Suspicious resolves the human review; Need more evidence keeps it open. **Review history** retains older entries, and **Add follow-up review** records a new conclusion. Human review never overwrites the AI assessment or approves a firewall block. See [human review](docs/DASHBOARD.md#7-record-a-human-review).
 
 | Change | When it takes effect |
 | --- | --- |
@@ -321,11 +328,11 @@ The loader also supports an existing local Python constants file through `creden
 
 ## Three manual scenarios
 
-Run each case and verify the retained evidence, advisory report and operator conclusion. Run the helper manually, once per reviewed rehearsal, only against your own Victim lab.
+Run each case and verify the retained evidence, advisory report and expected review route. Run the helper manually, once per reviewed rehearsal, only against your own Victim lab.
 
 | Scenario | Manual activity | Evidence-dependent interpretation | Possible Telegram path |
 | --- | --- | --- | --- |
-| Approved test | Trust-Client uses `soc_test` inside an approved window and attempt limit | Benign when retained evidence supports the plan | Review notice with conclusion buttons |
+| Approved test | Trust-Client uses `soc_test` inside an approved window and attempt limit | Benign when retained evidence supports the plan | Report only when labeled Benign |
 | Unapproved activity | Kali makes bounded SSH attempts with no matching approved plan | Suspicious if the observed context supports that conclusion; no plan alone is not proof of attack | Review notice with conclusion buttons |
 | Scope violation | Trust-Client attempts `root` while its plan permits only `soc_test` | Recorded root attempt is outside account scope; The selected model assesses its significance | Review notice with conclusion buttons |
 
@@ -353,7 +360,7 @@ Confirm no approved plan covers Kali `.4` at this time. Run once on **Kali**:
 python3 ~/soc-demo/ssh_demo_client.py --mode unapproved --execute
 ```
 
-Wait for the fixed correlation window and arrival allowance to finish. Read the evidence and AI recommendation, then record a separate conclusion using the review buttons.
+Wait for the fixed correlation window and arrival allowance to finish. Read the evidence and AI recommendation. If review is requested, record a separate conclusion using the review buttons.
 
 ### 3. Root attempt during an approved test — Trust-Client
 
@@ -371,7 +378,7 @@ The helper makes six deliberately failed attempts in two bursts separated by 12 
 
 ### Response approval
 
-The historical structured-assessment path could produce an eligible firewall approval. New SSH advisory reports use the review options below. For historical workflow reference, an eligible request asked:
+The historical structured-assessment path could produce an eligible firewall approval. New SSH advisory reports use the report-only or review route described above. For historical workflow reference, an eligible request asked:
 
 > Do you authorize blocking this source from accessing the victim's SSH service for 1 minute?
 
@@ -409,7 +416,7 @@ The deny affects the source IP's access to **Victim TCP/22**, not all network tr
 
 ### Manual investigation review
 
-New SSH incidents enter operator review after a plain-text advisory report or an assessment error:
+Suspicious, inconclusive and failed assessments use the following review choices. A recognized Benign report requires no Telegram decision.
 
 - **🟢 Benign:** save the human conclusion and resolve the review.
 - **🔴 Suspicious:** save the human conclusion and resolve the review.

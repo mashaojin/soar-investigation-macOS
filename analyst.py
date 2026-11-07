@@ -10,7 +10,7 @@ import sqlite3
 import subprocess
 from ollama_analyst import ollama_report, assessment_payload, make_prompt, validate_assessment
 from assessment_facts import VERSION
-from advisory_report import FORMAT as ADVISORY_FORMAT, validate as validate_advisory
+from advisory_report import FORMAT as ADVISORY_FORMAT, assessment_label, validate as validate_advisory
 from assessment_providers import freeze, provider_report
 from provider_state import effective, stamp
 
@@ -144,7 +144,10 @@ def analyze_next(db_path, settings, *, now=None, runner=provider_report):
             metadata = json.dumps(dict(json.loads(metadata),
                                        rejected_output=str(envelope.get("text", ""))[:4096]))
             raise
-        status = "manual_review" if advisory or validated["verdict"] == "INSUFFICIENT_EVIDENCE" or validated.get('recommended_action')=='REQUEST_MORE_EVIDENCE' else "complete"
+        if advisory:
+            status = "complete" if assessment_label(validated) == 'BENIGN' else "manual_review"
+        else:
+            status = "manual_review" if validated["verdict"] == "INSUFFICIENT_EVIDENCE" or validated.get('recommended_action')=='REQUEST_MORE_EVIDENCE' else "complete"
     except (ValueError, KeyError, TypeError, OSError, RuntimeError, subprocess.SubprocessError, http.client.HTTPException) as exc:
         error = ("Manual review required. No automatic retry. " + type(exc).__name__ + ": " + str(exc))[:3500]
     with closing(sqlite3.connect(db_path)) as db, db:

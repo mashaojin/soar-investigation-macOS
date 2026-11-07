@@ -49,11 +49,11 @@ def initialize(db):
     from ollama_analyst import INSTRUCTION
     identifier=sha(INSTRUCTION)
     db.execute('INSERT OR IGNORE INTO prompts VALUES(?,?,?,?)',(identifier,INSTRUCTION,now(),'Default instruction'))
-    from advisory_report import INSTRUCTION as advisory, LEGACY_SHIPPED_PROMPT
+    from advisory_report import INSTRUCTION as advisory, LEGACY_SHIPPED_PROMPT, PREVIOUS_INSTRUCTION
     advisory_id=sha(advisory)
     db.execute('INSERT OR IGNORE INTO prompts VALUES(?,?,?,?)',(advisory_id,advisory,now(),'Default advisory instruction'))
     db.execute('INSERT OR IGNORE INTO prompt_active VALUES(1,?)',(advisory_id,))
-    db.execute('UPDATE prompt_active SET id=? WHERE id IN (?,?)',(advisory_id,identifier,LEGACY_SHIPPED_PROMPT))
+    db.execute('UPDATE prompt_active SET id=? WHERE id IN (?,?,?)',(advisory_id,identifier,LEGACY_SHIPPED_PROMPT,sha(PREVIOUS_INSTRUCTION)))
 
 
 def active_instruction(root):
@@ -174,7 +174,11 @@ class ExperimentStore:
         if row is None: raise ValueError('Candidate prompt version not found.')
         baseline=sample['metadata'].get('prompt_version') or dict(id=sha(INSTRUCTION),text=INSTRUCTION,label='Original default')
         original_advisory = sample['metadata'].get('assessment_format') == 'advisory_text'
-        if sha(make_prompt(sample['payload'],instruction=baseline['text'],advisory=original_advisory))!=sample['original_prompt_hash']:
+        original = make_prompt(sample['payload'],instruction=baseline['text'],advisory=original_advisory)
+        original_hash = sample['original_prompt_hash']
+        if original_advisory and sha(original)!=original_hash:
+            original = make_prompt(sample['payload'],instruction=baseline['text'],advisory=True,advisory_routing=False)
+        if sha(original)!=original_hash:
             raise ValueError('The original instruction cannot be reconstructed exactly; use an incident with recorded prompt provenance.')
         make_prompt(sample['payload'],instruction=row[0],advisory=settings['_advisory_report'])
         snapshot=dict(sample,baseline=baseline,candidate=dict(id=values['prompt_id'],text=row[0],label=row[1]),
