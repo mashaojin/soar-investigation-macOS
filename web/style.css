@@ -38,3 +38,5 @@
 .incident-number{display:block;font-size:11px;font-weight:600;color:var(--muted);margin:4px 0;overflow-wrap:anywhere}
 
 .configuration-table{width:100%;border-collapse:collapse;font-size:12px;margin:14px 0 24px;table-layout:fixed}.configuration-table th,.configuration-table td{text-align:left;vertical-align:top;padding:12px 10px;border-bottom:1px solid var(--line);overflow-wrap:anywhere}.configuration-table thead th{font-size:11px;color:var(--muted);background:var(--soft)}.configuration-table th:first-child{width:25%}.configuration-table th:nth-child(2){width:23%}.configuration-table tbody th{font-weight:600}.configuration-value{font-weight:600;color:var(--accent)}.configuration-explanation{color:var(--muted);line-height:1.6}@media(max-width:600px){.configuration-table{font-size:11px}.configuration-table th,.configuration-table td{padding:10px 6px}.configuration-table th:first-child{width:27%}.configuration-table th:nth-child(2){width:25%}}
+
+.advisory-prose{white-space:pre-wrap;overflow-wrap:anywhere}

@@ -14,7 +14,7 @@ from urllib.request import Request,urlopen
 
 from experiment_store import ExperimentStore,active_instruction,sha,encode
 from ollama_analyst import INSTRUCTION,make_prompt,assessment_payload
-from assessment_facts import observed_claims
+from advisory_report import INSTRUCTION as ADVISORY
 from ssh_investigation import build_job
 from ssh_scenarios import ROOT
 from rule_editor import RuleEditor
@@ -37,9 +37,7 @@ class ExperimentTests(unittest.TestCase):
 
     def runner(self,prompt,settings):
         self.calls.append((prompt,deepcopy(settings)))
-        report=dict(verdict='BENIGN',reason='Observed attempts fit the approved test scope.',recommendations=['Retain evidence.','Monitor source.'],
-            evidence_refs=['E2','E3','P1'],claims=observed_claims(settings['investigation']),recommended_action='REPORT_ONLY')
-        return dict(text=encode(report),model='gemma4:e4b')
+        return dict(text='Observed attempts fit the approved test scope [E2, P1].',model='gemma4:e4b')
 
     def test_save_does_not_activate_and_activate_requires_current_version(self):
         base=active_instruction(self.root)
@@ -49,7 +47,7 @@ class ExperimentTests(unittest.TestCase):
         self.assertEqual(active_instruction(self.root)['id'],candidate['id'])
         with self.assertRaises(ValueError): self.store.activate({'id':base['id'],'expected_active':base['id']})
         self.store.activate({'id':base['id'],'expected_active':candidate['id']})
-        self.assertEqual(active_instruction(self.root)['text'],INSTRUCTION)
+        self.assertEqual(active_instruction(self.root)['text'],ADVISORY)
 
     def test_second_dashboard_cannot_interrupt_running_store(self):
         with self.assertRaisesRegex(RuntimeError,'Another dashboard'):
@@ -72,20 +70,20 @@ class ExperimentTests(unittest.TestCase):
         self.assertNotEqual(self.calls[0][0],self.calls[1][0])
         self.assertEqual(self.calls[0][1],self.calls[1][1]);self.assertEqual(s['evidence_hash'],sha(encode(self.payload)))
         self.assertTrue(r['responses_disabled']);self.assertEqual(before,(self.root/'ssh-live.sqlite3').read_bytes())
-        self.assertEqual(len(r['arms']),2);self.assertEqual(active_instruction(self.root)['text'],INSTRUCTION)
+        self.assertEqual(len(r['arms']),2);self.assertEqual(active_instruction(self.root)['text'],ADVISORY)
 
     def test_live_analyst_uses_active_version_and_records_it(self):
         from analyst import analyze_next
         from datetime import datetime,timezone
         candidate=self.store.save_prompt({'text':INSTRUCTION+'Evaluate timing explicitly.','label':'Timing'})
-        self.store.activate({'id':candidate['id'],'expected_active':sha(INSTRUCTION)})
+        self.store.activate({'id':candidate['id'],'expected_active':sha(ADVISORY)})
         with closing(sqlite3.connect(self.root/'ssh-live.sqlite3')) as db,db:
             db.execute('DROP TABLE incidents');db.execute('DROP TABLE analyses')
             db.execute('CREATE TABLE incidents(incident_id TEXT PRIMARY KEY,revision INTEGER,evidence TEXT,alert_count INTEGER,status TEXT)')
             db.execute("INSERT INTO incidents VALUES('saved',1,?,1,'pending')",(encode(self.evidence),))
         with patch('ssh_live_investigation.ready_after',return_value=datetime(2020,1,1,tzinfo=timezone.utc)),patch('ssh_live_investigation.prepare_live_job',return_value=('',self.job)):
             result=analyze_next(self.root/'ssh-live.sqlite3',dict(ssh_enrichment=True,approved_plans='unused'),runner=self.runner)
-        self.assertEqual(result['status'],'complete');self.assertIn('Evaluate timing explicitly.',self.calls[0][0])
+        self.assertEqual(result['status'],'manual_review');self.assertIn('Evaluate timing explicitly.',self.calls[0][0])
         with closing(sqlite3.connect(self.root/'ssh-live.sqlite3')) as db:
             saved=json.loads(db.execute('SELECT metadata FROM analyses').fetchone()[0])
         self.assertEqual(saved['prompt_version']['id'],candidate['id']);self.assertIn('code_hash',saved['python_context'])
@@ -96,11 +94,11 @@ class ExperimentTests(unittest.TestCase):
             self.store.start_comparison({'incident_id':'saved','prompt_id':sha(INSTRUCTION)})
 
     def test_invalid_model_output_is_retained_for_comparison(self):
-        self.store.runner=lambda *args:{'text':'invalid json'}
+        self.store.runner=lambda *args:{'text':'Unrecognized evidence [E99]'}
         self.store.start_comparison({'incident_id':'saved','prompt_id':sha(INSTRUCTION)})
         self.store.pool.shutdown(wait=True)
         r=self.store.state()['comparisons'][0]
-        self.assertEqual(r['status'],'needs_review');self.assertEqual(r['result']['arms'][0]['raw_output'],'invalid json')
+        self.assertEqual(r['status'],'needs_review');self.assertEqual(r['result']['arms'][0]['raw_output'],'Unrecognized evidence [E99]')
 
 
 class RuleHelperTests(unittest.TestCase):
@@ -191,7 +189,7 @@ class ExperimentHTTPTests(unittest.TestCase):
             try:
                 base='http://127.0.0.1:'+str(server.server_port)
                 with urlopen(base+'/api/experiments') as response: state=json.load(response)
-                self.assertEqual(state['active']['text'],INSTRUCTION)
+                self.assertEqual(state['active']['text'],ADVISORY)
                 for headers in [{},{'Origin':'https://example.com','X-SOAR-CSRF':server.csrf_token}]:
                     req=Request(base+'/api/prompts/save',data=encode({'text':INSTRUCTION,'label':'Default'}).encode(),headers={'Content-Type':'application/json',**headers})
                     with self.assertRaises(HTTPError) as caught:urlopen(req)

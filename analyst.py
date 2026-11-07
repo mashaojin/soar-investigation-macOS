@@ -9,7 +9,10 @@ from pathlib import Path
 import sqlite3
 import subprocess
 from ollama_analyst import ollama_report, assessment_payload, make_prompt, validate_assessment
-from assessment_facts import VERSION, has_observations
+from assessment_facts import VERSION
+from advisory_report import FORMAT as ADVISORY_FORMAT, validate as validate_advisory
+from assessment_providers import freeze, provider_report
+from provider_state import effective, stamp
 
 
 
@@ -44,7 +47,7 @@ def recover_interrupted_analyses(db_path):
         return len(rows)
 
 
-def analyze_next(db_path, settings, *, now=None, runner=ollama_report):
+def analyze_next(db_path, settings, *, now=None, runner=provider_report):
     now = now or datetime.now(timezone.utc)
     with closing(sqlite3.connect(db_path)) as db, db:
         db.executescript("""
@@ -93,6 +96,12 @@ def analyze_next(db_path, settings, *, now=None, runner=ollama_report):
         db.commit()  # Claim revision before expensive analysis; concurrent workers cannot repeat it.
     status, report, error, metadata = "manual_review", None, None, None
     try:
+        advisory = bool(settings.get('ssh_enrichment') and evidence.get('signature_id') == 9001001)
+        settings.update(_provider_root=str(Path(db_path).resolve().parent),
+                        _incident_id=incident_id, _incident_window_start=evidence.get('window_start'),
+                        _advisory_report=advisory)
+        settings = freeze(settings)
+        route = effective(settings)
         investigation = None
         if settings.get("ssh_enrichment") and evidence.get("signature_id") == 9001001:
             from ssh_live_investigation import prepare_live_job
@@ -101,34 +110,33 @@ def analyze_next(db_path, settings, *, now=None, runner=ollama_report):
         payload = assessment_payload(evidence, investigation)
         from experiment_store import active_instruction, python_context, rule_provenance
         prompt_version=active_instruction(Path(db_path).resolve().parent)
-        prompt = make_prompt(payload,instruction=prompt_version['text'])
+        prompt = make_prompt(payload,instruction=prompt_version['text'],advisory=advisory)
         digest = hashlib.sha256(prompt.encode()).hexdigest()
         prepared = {"engine": "ollama_direct", "assessment_version":VERSION,"assessment_data": payload,
                     "investigation": investigation, "request_count": 0, "request_attempts": 0,
                     "prompt_version":prompt_version,"python_context":python_context(),
                     "rule_provenance":rule_provenance(Path(db_path).resolve().parent,evidence)}
+        prepared.update(stamp(route))
+        prepared['engine'] = route['provider'] + '_direct'
+        if advisory:
+            prepared['assessment_format'] = ADVISORY_FORMAT
         # Persist the immutable authorization/evidence snapshot before inference,
         # including failed/partial assessments. Legacy tool traces are untouched.
         with closing(sqlite3.connect(db_path)) as audit_db, audit_db:
             audit_db.execute("UPDATE analyses SET prompt_hash=?,metadata=? WHERE incident_id=? AND revision=?",
                              (digest, json.dumps(prepared), incident_id, revision))
         metadata = json.dumps(prepared)
-        if investigation:
-            auth = investigation['authentication']
-            if auth.get('coverage') not in ('complete_for_fixture', 'observed_window'):
-                raise ValueError('Incomplete authentication coverage requires review before inference')
-            if not has_observations(auth):
-                raise ValueError('No authentication outcomes or protection observations; manual review before inference')
         prepared.update(request_count=None, request_attempts=1)
         metadata=json.dumps(prepared)
         with closing(sqlite3.connect(db_path)) as audit_db, audit_db:
             audit_db.execute("UPDATE analyses SET metadata=? WHERE incident_id=? AND revision=?",
                              (metadata,incident_id,revision))
         envelope = runner(prompt, settings)
-        metadata = json.dumps(dict(prepared, **{key: value for key, value in envelope.items() if key != "text"}))
+        metadata = json.dumps({**prepared, **{key: value for key, value in envelope.items() if key != "text"}, **stamp(route)})
         try:
-            validated = validate_assessment(envelope["text"], payload, investigation)
-            if investigation:
+            validated = (validate_advisory(envelope["text"], payload) if advisory else
+                         validate_assessment(envelope["text"], payload, investigation))
+            if investigation and not advisory:
                 validated["scenario"] = "ssh_investigation"
                 validated["coverage"] = investigation["authentication"]["coverage"]
             report = json.dumps(validated, sort_keys=True)
@@ -136,7 +144,7 @@ def analyze_next(db_path, settings, *, now=None, runner=ollama_report):
             metadata = json.dumps(dict(json.loads(metadata),
                                        rejected_output=str(envelope.get("text", ""))[:4096]))
             raise
-        status = "manual_review" if validated["verdict"] == "INSUFFICIENT_EVIDENCE" or validated.get('recommended_action')=='REQUEST_MORE_EVIDENCE' else "complete"
+        status = "manual_review" if advisory or validated["verdict"] == "INSUFFICIENT_EVIDENCE" or validated.get('recommended_action')=='REQUEST_MORE_EVIDENCE' else "complete"
     except (ValueError, KeyError, TypeError, OSError, RuntimeError, subprocess.SubprocessError, http.client.HTTPException) as exc:
         error = ("Manual review required. No automatic retry. " + type(exc).__name__ + ": " + str(exc))[:3500]
     with closing(sqlite3.connect(db_path)) as db, db:

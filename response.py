@@ -89,6 +89,8 @@ def plan_for(evidence, policy):
 
 
 def bound_plan(evidence, report, metadata, policy, now):
+    if report.get('format') == 'advisory_text':
+        raise ValueError('Advisory reports require human review')
     plan=plan_for(evidence,policy)
     if policy['mode']=='live':
         from live_response import validate_live_evidence
@@ -141,6 +143,8 @@ def queue_reports(db_path, policy, identity, *, now=None):
     ttl = policy["approval_ttl_seconds"]
     if type(ttl) is not int or not 30 <= ttl <= 3600:
         raise ValueError("Approval TTL must be 30–3600 seconds")
+    from provider_state import selection, validate_binding
+    provider_root=Path(db_path).resolve().parent
     with closing(sqlite3.connect(db_path, timeout=10)) as db, db:
         initialize(db)
         db.execute("BEGIN IMMEDIATE")
@@ -155,7 +159,9 @@ def queue_reports(db_path, policy, identity, *, now=None):
             LEFT JOIN approval_requests r ON r.incident_id=i.incident_id AND r.revision=i.revision
             WHERE ((a.status='complete' AND i.status='complete') OR
                    (a.status='manual_review' AND i.status='manual_review' AND a.report IS NOT NULL
-                    AND json_extract("""+metadata+""",'$.assessment_version')=?)) AND r.request_id IS NULL""",(VERSION,)).fetchall()
+                    AND json_extract("""+metadata+""",'$.assessment_version')=?)) AND json_extract(a.report,'$.format') IS NOT 'advisory_text'
+            AND r.request_id IS NULL""",(VERSION,)).fetchall()
+        selected = selection(provider_root)
         queued = 0
         for incident, revision, evidence, report, metadata in rows:
             if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='human_reviews'").fetchone():
@@ -168,7 +174,10 @@ def queue_reports(db_path, policy, identity, *, now=None):
             wants_response=parsed.get('assessment_version')!=VERSION or parsed.get('recommended_action')=='REQUEST_BLOCK_APPROVAL'
             if parsed["verdict"] == "SUSPICIOUS" and wants_response and json.loads(evidence).get("scenario") != "dvwa_sqli":
                 try:
-                    plan = bound_plan(json.loads(evidence),json.loads(report),json.loads(metadata or '{}'),policy,now)
+                    saved_metadata=json.loads(metadata or '{}')
+                    if selected:
+                        validate_binding(saved_metadata, {'_provider_root':str(provider_root)})
+                    plan = bound_plan(json.loads(evidence),parsed,saved_metadata,policy,now)
                 except (ValueError, KeyError, TypeError) as exc:
                     audit(db, request_id, "policy_rejected", str(exc), now)
             db.execute("""INSERT INTO approval_requests

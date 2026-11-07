@@ -37,3 +37,5 @@ recovery-audit/
 /*-backup*/
 /*.png
 /release-check.json
+
+.gemini-access.local.json.tmp

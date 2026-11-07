@@ -24,7 +24,7 @@ Victim EVE JSON --SSH--> Python monitor --> durable events + correlated incident
 | `ssh_evidence.py`, `ssh_auth_reader.py` | Read-only scoped victim journal summaries and coverage checks |
 | `approved_plans.py`, `plan_editor.py`, `ssh_live_investigation.py` | Validated dashboard authorization and evidence preparation |
 | `ssh_investigation.py`, `ssh_scenarios.py` | Shared scope comparisons and synthetic-scenario support; historical classifiers are not the active Gemma verdict |
-| `analyst.py`, `ollama_analyst.py`, `assessment_facts.py` | One model request, structured facts, prose/coverage checks and manual-review failures |
+| `analyst.py`, `ollama_analyst.py`, `assessment_facts.py` | Bounded evidence and one advisory report, checked for length and existing citation IDs |
 | `response.py`, `telegram_client.py` | Template selection, policy gate, private-chat approval validation and the sole Telegram poller |
 | `live_response.py`, `live_lab_guard.py` | Independent live worker, victim-side rollback before deny installation and response verification |
 | `live_lab.py` | Connectivity probe transport reused by the live worker; its older standalone pilot CLI is not the continuous workflow |

@@ -366,6 +366,8 @@ Follow the README's [three manual scenarios](../README.md#three-manual-scenarios
 
 ## 8. Enable and verify live response
 
+This section records the earlier structured-response rehearsal. New SSH advisory reports go to human review and do not queue firewall approvals.
+
 Do this only after the dry-run checks and deliberate review of `live_response.py` and `live_lab_guard.py`. Victim must have active UFW, a working root guest-agent path, a functioning systemd timer and no ambiguous existing source-specific rule. Keep guest consoles available and do not suspend/reboot Victim during a block.
 
 Wait for previous work to finish, stop the monitor, and review the exact live scope in `response.local.json`: permitted sources `.4`/`.8`, target `.6`, port 22, protected `.1`/`.6`, duration 60 and approval TTL 600 seconds. Activate only new incidents using a current UTC timestamp:
@@ -417,7 +419,7 @@ This installs a root-owned fixed helper on Victim through the verified guest age
 
 On the dashboard choose **Settings → Suricata rule → Read from Victim**. Edit only the supported message/threshold/revision fields, validate, review the diff, and explicitly apply. Check the returned activation state. Unknown state requires reading Victim status before retrying. The YAML must keep the exact fixed rule reference and a working Unix command socket from step 3.
 
-**Settings → Gemma prompt** supports save, same-evidence comparison and explicit activation. A saved version is not active until selected and activated. Comparisons call the model but send no Telegram messages or firewall commands. **Pipeline configuration** is read-only. Changing a prompt on saved evidence does not test a new network rule on traffic that was never captured.
+**Settings → AI prompt** supports save, same-evidence comparison and explicit activation. A saved version is not active until selected and activated. Comparisons call the model but send no Telegram messages or firewall commands. **Settings → AI model selection** configures Ollama or Gemini API and displays read-only pipeline limits. See [Gemini setup](GEMINI_PROVIDER.md). Changing a prompt on saved evidence does not test a new network rule on traffic that was never captured.
 
 ## Completion checklist
 

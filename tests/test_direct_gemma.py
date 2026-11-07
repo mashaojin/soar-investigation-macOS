@@ -110,8 +110,8 @@ class DirectValidationTests(unittest.TestCase):
                 con.execute('INSERT INTO incidents VALUES (?,?,?,?,?)',('i',1,json.dumps(e),1,'pending'))
             runtime={'ssh_enrichment':True,'approved_plans':'unused'}
             with patch('ssh_live_investigation.ready_after',return_value=datetime(2026,1,1,tzinfo=timezone.utc)),patch('ssh_live_investigation.prepare_live_job',return_value=('',j)):
-                runner=MagicMock(return_value={'text':json.dumps(dict(report(),claims=observed_claims(j),recommended_action='REPORT_ONLY')),'request_count':1})
-                self.assertEqual(analyze_next(db,runtime,runner=runner)['status'],'complete')
+                runner=MagicMock(return_value={'text':'Observed accounts are in scope [P1].','request_count':1})
+                self.assertEqual(analyze_next(db,runtime,runner=runner)['status'],'manual_review')
                 self.assertEqual(analyze_next(db,runtime,runner=runner)['status'],'idle')
                 self.assertEqual(runner.call_count,1)
             j['plan_evidence']['plan']['allowed_accounts']=['root']
@@ -119,19 +119,19 @@ class DirectValidationTests(unittest.TestCase):
             self.assertEqual(m['investigation']['plan_evidence']['plan']['allowed_accounts'],['soc_test'])
             self.assertNotIn('tool_trace',m)
 
-    def test_incomplete_coverage_is_saved_without_model_request(self):
+    def test_incomplete_coverage_is_supplied_to_model_for_advisory_review(self):
         e,j=job();j['authentication']['coverage']='journal_query_complete'
         with tempfile.TemporaryDirectory() as temp:
             db=Path(temp)/'state.db'
             with sqlite3.connect(db) as con:
                 con.execute('CREATE TABLE incidents (incident_id TEXT,revision INTEGER,evidence TEXT,alert_count INTEGER,status TEXT)')
                 con.execute('INSERT INTO incidents VALUES (?,?,?,?,?)',('i',1,json.dumps(e),1,'pending'))
-            runner=MagicMock()
+            runner=MagicMock(return_value={'text':'Journal coverage is limited [E2].','request_count':1})
             with patch('ssh_live_investigation.ready_after',return_value=datetime(2026,1,1,tzinfo=timezone.utc)),patch('ssh_live_investigation.prepare_live_job',return_value=('',j)):
                 result=analyze_next(db,{'ssh_enrichment':True,'approved_plans':'unused'},runner=runner)
-            self.assertEqual(result['status'],'manual_review');runner.assert_not_called()
+            self.assertEqual(result['status'],'manual_review');runner.assert_called_once()
             with sqlite3.connect(db) as con:m=json.loads(con.execute('SELECT metadata FROM analyses').fetchone()[0])
-            self.assertEqual(m['request_count'],0);self.assertEqual(m['request_attempts'],0)
+            self.assertEqual(m['request_count'],1);self.assertEqual(m['request_attempts'],1)
             self.assertIn('E2',m['assessment_data']['observed_facts'])
 
     def test_interrupted_worker_becomes_review_without_retry(self):

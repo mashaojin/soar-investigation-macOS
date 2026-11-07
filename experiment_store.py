@@ -32,8 +32,8 @@ def python_context():
         unapproved_window_seconds=WINDOW_SECONDS,arrival_allowance_seconds=ARRIVAL_SECONDS,
         unapproved_pre_alert_context_seconds=PRE_ALERT_SECONDS,
         approved_evidence_scope='Entire approved plan only; no separate before/after evidence is currently collected.',
-        classification='Gemma selects the verdict; Python supplies and checks facts.',
-        safeguards='Structured schema and fact checks, coverage checks, source allowlist, operator approval, 60-second rollback.')
+        classification='The selected model writes an advisory assessment; the operator records the conclusion.',
+        safeguards='Advisory text length and citation checks; independent response policy.')
 
 
 def initialize(db):
@@ -49,7 +49,11 @@ def initialize(db):
     from ollama_analyst import INSTRUCTION
     identifier=sha(INSTRUCTION)
     db.execute('INSERT OR IGNORE INTO prompts VALUES(?,?,?,?)',(identifier,INSTRUCTION,now(),'Default instruction'))
-    db.execute('INSERT OR IGNORE INTO prompt_active VALUES(1,?)',(identifier,))
+    from advisory_report import INSTRUCTION as advisory, LEGACY_SHIPPED_PROMPT
+    advisory_id=sha(advisory)
+    db.execute('INSERT OR IGNORE INTO prompts VALUES(?,?,?,?)',(advisory_id,advisory,now(),'Default advisory instruction'))
+    db.execute('INSERT OR IGNORE INTO prompt_active VALUES(1,?)',(advisory_id,))
+    db.execute('UPDATE prompt_active SET id=? WHERE id IN (?,?)',(advisory_id,identifier,LEGACY_SHIPPED_PROMPT))
 
 
 def active_instruction(root):
@@ -98,7 +102,9 @@ class ExperimentStore:
             db.execute("UPDATE comparisons SET status='interrupted',updated_at=? WHERE status IN ('queued','running')",(now(),))
 
     def state(self):
-        from ollama_analyst import OPTIONS,MODEL
+        from provider_state import effective
+        from provider_service import ProviderService, runtime_settings
+        configured=effective(runtime_settings(self.root));options={k:configured[k] for k in ('num_ctx','num_predict')}
         with closing(sqlite3.connect(self.path)) as db:
             prompts=[dict(id=i,text=t,created_at=c,label=l) for i,t,c,l in db.execute('SELECT * FROM prompts ORDER BY created_at DESC LIMIT 50')]
             jobs=[dict(id=i,status=s,created_at=c,result=json.loads(r)) for i,s,c,r in db.execute('SELECT id,status,created_at,result FROM comparisons ORDER BY created_at DESC LIMIT 20')]
@@ -108,8 +114,9 @@ class ExperimentStore:
             for arm in job['result'].get('arms',[]):
                 arm['display_report']=present_report(arm.get('report'))
         return dict(active=active_instruction(self.root),prompts=prompts,comparisons=jobs,
-            python=python_context(),model=dict(name=MODEL,options=OPTIONS),
-            rule=json.loads(cached[0]) if cached else None)
+            python=python_context(),model=dict(name=configured['model'],options=options),
+            rule=json.loads(cached[0]) if cached else None,
+            provider=ProviderService(self.root).state())
 
     def save_prompt(self,values):
         if not isinstance(values,dict) or set(values)!={'text','label'}: raise ValueError('Supply prompt text and version label.')
@@ -118,7 +125,7 @@ class ExperimentStore:
         # Reject a prompt that already exceeds the budget with the selected/latest evidence.
         from ollama_analyst import make_prompt
         samples=self.saved_samples()
-        if samples: make_prompt(samples[0]['payload'],instruction=text)
+        if samples: make_prompt(samples[0]['payload'],instruction=text,advisory=True)
         i=sha(text)
         with closing(sqlite3.connect(self.path)) as db,db:
             db.execute('INSERT OR IGNORE INTO prompts VALUES(?,?,?,?)',(i,text,now(),label.strip()))
@@ -152,18 +159,27 @@ class ExperimentStore:
 
     def start_comparison(self,values):
         if not isinstance(values,dict) or set(values)!={'incident_id','prompt_id'}: raise ValueError('Choose a saved incident and candidate prompt version.')
-        from ollama_analyst import INSTRUCTION,make_prompt,OPTIONS,MODEL
+        from ollama_analyst import INSTRUCTION,make_prompt
+        from assessment_providers import freeze
+        from provider_state import effective
+        from provider_service import runtime_settings
+        settings=freeze(runtime_settings(self.root));configured=effective(settings);options={k:configured[k] for k in ('num_ctx','num_predict')}
+        settings['_advisory_report'] = True
+        if configured['provider']=='gemini':
+            raise ValueError('Switch to Ollama to compare saved incident evidence. Gemini only accepts synthetic checks and separately authorized new incidents.')
         sample=next((s for s in self.saved_samples() if s['incident_id']==values['incident_id']),None)
         if sample is None: raise ValueError('No complete saved SSH evidence snapshot for this incident.')
         with closing(sqlite3.connect(self.path)) as db:
             row=db.execute('SELECT text,label FROM prompts WHERE id=?',(values['prompt_id'],)).fetchone()
         if row is None: raise ValueError('Candidate prompt version not found.')
         baseline=sample['metadata'].get('prompt_version') or dict(id=sha(INSTRUCTION),text=INSTRUCTION,label='Original default')
-        if sha(make_prompt(sample['payload'],instruction=baseline['text']))!=sample['original_prompt_hash']:
+        original_advisory = sample['metadata'].get('assessment_format') == 'advisory_text'
+        if sha(make_prompt(sample['payload'],instruction=baseline['text'],advisory=original_advisory))!=sample['original_prompt_hash']:
             raise ValueError('The original instruction cannot be reconstructed exactly; use an incident with recorded prompt provenance.')
-        make_prompt(sample['payload'],instruction=row[0])
+        make_prompt(sample['payload'],instruction=row[0],advisory=settings['_advisory_report'])
         snapshot=dict(sample,baseline=baseline,candidate=dict(id=values['prompt_id'],text=row[0],label=row[1]),
-                      evidence_hash=sha(encode(sample['payload'])),python=python_context(),model=MODEL,options=OPTIONS,
+                      evidence_hash=sha(encode(sample['payload'])),python=python_context(),model=configured['model'],options=options,
+                      model_settings=settings,
                       rule_provenance=sample['metadata'].get('rule_provenance',{'status':'Historical rule hash unavailable; original alert signature/revision only.'}))
         i=secrets.token_hex(12)
         with closing(sqlite3.connect(self.path)) as db,db:
@@ -175,7 +191,9 @@ class ExperimentStore:
         return dict(id=i,status='queued',note='Two fresh model calls on the same saved evidence. No Telegram or response actions.')
 
     def run_comparison(self,identifier):
-        from ollama_analyst import make_prompt,ollama_report,validate_assessment
+        from ollama_analyst import make_prompt,validate_assessment
+        from advisory_report import validate as validate_advisory
+        from assessment_providers import provider_report
         # One comparison at a time, additionally serialized with production inference.
         with closing(sqlite3.connect(self.path)) as db,db:
             snapshot=json.loads(db.execute('SELECT snapshot FROM comparisons WHERE id=?',(identifier,)).fetchone()[0])
@@ -184,14 +202,16 @@ class ExperimentStore:
             python=snapshot['python'],original_python=snapshot['metadata'].get('python_context',{'status':'Historical code/settings snapshot unavailable'}),model=snapshot['model'],options=snapshot['options'],rule_provenance=snapshot['rule_provenance'],
             original_report=snapshot['original_report'],responses_disabled=True,arms=[])
         try:
+            advisory = snapshot.get('model_settings', {}).get('_advisory_report') is True
             for name in ('baseline','candidate'):
-                prompt=make_prompt(snapshot['payload'],instruction=snapshot[name]['text'])
+                prompt=make_prompt(snapshot['payload'],instruction=snapshot[name]['text'],advisory=advisory)
                 arm=dict(name=name,prompt_id=snapshot[name]['id'],prompt_label=snapshot[name]['label'])
                 try:
-                    envelope=(self.runner or ollama_report)(prompt,dict(investigation=snapshot['investigation']))
+                    envelope=(self.runner or provider_report)(prompt,dict(snapshot.get('model_settings',{}),investigation=snapshot['investigation']))
                     arm['raw_output']=envelope['text']
                     arm['metadata']={k:v for k,v in envelope.items() if k!='text'}
-                    arm['report']=validate_assessment(envelope['text'],snapshot['payload'],snapshot['investigation'])
+                    arm['report'] = (validate_advisory(envelope['text'],snapshot['payload']) if advisory else
+                                     validate_assessment(envelope['text'],snapshot['payload'],snapshot['investigation']))
                     arm['status']='valid'
                 except Exception as exc:
                     arm.update(status='invalid_or_failed',error=type(exc).__name__+': '+str(exc)[:1500])

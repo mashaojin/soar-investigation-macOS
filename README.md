@@ -6,11 +6,9 @@
 
 This is the original **Mac / UTM / Gemma4** implementation, previously named `soc-pipeline`. The separate [Windows project](https://github.com/mashaojin/soar-investigation-windows) has its own setup, platform adapters and verification limits. This README uses the same organization as that project, but all commands below describe this macOS implementation.
 
-**Suricata → Python correlation and SSH evidence → one bounded Ollama assessment → Python validation → Telegram decision → optional temporary SSH deny with victim-side rollback.**
+**Suricata → Python correlation and SSH evidence → one bounded AI advisory report → operator review in the dashboard or Telegram.**
 
-The model assesses evidence. Python owns collection, validation and response policy. A human approves each eligible firewall response. This is an educational lab, not a production security product. The current pipeline calls Ollama directly; it does not require Hermes or autonomous model tools.
-
-> **macOS status:** the three manual scenarios and actual Telegram-approved, 60-second UFW block/rollback were exercised in the original UTM lab. A clean source copy passed **238 offline tests**. The repository does not provision all VMs automatically, and model accuracy across arbitrary attacks or configurations is not established. Follow the checkpoints below rather than treating a passing CI run as a live-lab qualification.
+Ollama with Gemma4 is the default. Google Gemini API is optional and requires separate local authorization before new incident evidence can be sent. Python collects evidence and checks the report's length and citation IDs. The operator records the final conclusion. This is an educational lab and runs without Hermes.
 
 ## Contents
 
@@ -35,24 +33,13 @@ flowchart TD
     C --> D[Correlate related alerts into an incident]
     D --> E[Scoped Victim SSH journal evidence]
     D --> F[Approved-plan lookup and scope comparisons]
-    E --> G[One bounded local Gemma4 assessment]
+    E --> G[One bounded report through Ollama or Gemini]
     F --> G
-    G --> H{Python validates output and evidence}
-    H -->|Invalid or insufficient| I[Manual review]
-    H -->|Valid Benign or report only| J[Telegram report]
-    H -->|Valid Suspicious and block requested| K{Independent response policy}
-    K -->|Ineligible| J
-    K -->|Eligible| L[Incident-bound Telegram approval request]
-    L -->|Deny or expire| J
-    L -->|Authorized operator approves| M[Guarded response worker]
-    M --> N[Arm Victim rollback before deny]
-    N --> O[Apply and independently verify temporary SSH deny]
-    O --> P[Verify removal and restored source connectivity]
-    I --> Q[Separate human conclusion]
-    C --> R[Dashboard history and live progress]
-    J --> R
-    P --> R
-    Q --> R
+    G --> H[Check report length and cited IDs]
+    H -->|Report accepted| I[Read advisory in the dashboard or Telegram]
+    H -->|Report rejected or unavailable| J[Inspect evidence and technical error]
+    I --> K[Record human conclusion]
+    J --> K
 ```
 
 ### Responsibilities
@@ -62,12 +49,11 @@ flowchart TD
 | Suricata | Detect connection-threshold activity and write EVE alerts | Password outcomes, malicious intent or a block |
 | Python collector | Continuous ingestion, cursor handling and incident correlation | An AI verdict |
 | Evidence/plan layer | Scoped authentication outcomes, coverage and authorization comparisons | A security classification |
-| Gemma4 through Ollama | Verdict, explanation and recommended next step | Tool execution, shell commands or firewall changes |
-| Python validators/policy | Check structure, facts, coverage, attribution and response eligibility | Human approval |
-| Telegram operator | Approve/deny one exact eligible response, or record a separate human review | Reuse an expired/stale approval |
-| Victim helper | Fixed source-to-Victim SSH deny and automatic rollback | Arbitrary model-generated commands |
+| Selected AI model | Plain-text assessment, evidence citations and suggested next step | Operator conclusions or firewall changes |
+| Python output checks | Bound the text to 4,096 UTF-8 bytes and verify cited IDs exist | Assess whether the reasoning is correct |
+| Operator | Review evidence and record a conclusion in the dashboard or Telegram | Authorize a firewall change through a review button |
 
-Gemma chooses **Benign**, **Suspicious** or **Insufficient Evidence**, and recommends **Report only**, **Request more evidence** or **Request block approval**. Scenarios are inputs, not predetermined verdicts. A Suspicious verdict alone does not offer a block: the recommendation and independent Python checks must also pass.
+The model may describe activity as benign, suspicious or inconclusive. The approved plan, SSH authentication and scope comparisons are supplied as evidence. Python accepts the prose without evaluating the verdict, claims or reasoning. Advisory reports go to review, including reports that suggest blocking.
 
 ### What happens to one incident
 
@@ -75,9 +61,9 @@ Gemma chooses **Benign**, **Suspicious** or **Insufficient Evidence**, and recom
 2. Suricata writes an alert to `/var/log/suricata/eve.json` on Victim.
 3. The Mac monitor reads new EVE records over SSH, saves the cursor and groups related alerts. An incident receives a durable internal ID, readable number and revision.
 4. Python waits for its evidence window to close, then reads the scoped `ssh.service` journal and the recorded test-plan authorization. Counts and scope comparisons are supplied as facts.
-5. One local Ollama request asks Gemma for a structured assessment. Python rejects incomplete, unsupported or inconsistent output; it does not silently retry until a desired answer appears.
-6. The report, review notice or eligible response request is delivered through the monitor's one Telegram handler. Dashboard history retains the evidence and assessment.
-7. An authorized YES can trigger the independent live worker only in live mode. Victim arms rollback before installing the deny. The worker checks the receipt, protected management, blocked source connectivity and restored access after removal.
+5. The selected model receives bounded evidence and writes a plain-text assessment. Python checks that the response fits within the length limit and that any cited IDs exist in the supplied evidence. There is no automatic retry.
+6. The dashboard retains the report and original evidence. With Telegram enabled, the monitor sends a review notice with a short excerpt and incident-bound conclusion buttons.
+7. Record **Benign**, **Suspicious** or **Need more evidence** as a separate human conclusion.
 
 **Evidence timing:** unapproved scopes use a fixed **120-second** correlation window, up to **60 seconds** of pre-alert context and a **30-second** arrival allowance. Approved scopes use the entire approved plan window plus the arrival allowance. Authorization boundaries can shorten an unapproved scope. Collection catch-up and inference add further delay. Related runs can become one incident; do not expect one incident for every invocation of the client script.
 
@@ -110,7 +96,7 @@ The dashboard preserves readable incident numbers, timestamps, grouped alerts, A
 | --- | --- |
 | ![Telegram message after a completed temporary SSH block and rollback](docs/images/telegram-live-response.png) | ![Telegram manual-review notice with incident reference, time and reason](docs/images/telegram-manual-review.png) |
 
-The live screenshot shows a completed historical response, so its pending approval buttons are no longer displayed. Current eligible live requests offer **YES — Approve LIVE 60s block** and **NO — Deny block / report only**. New manual-review notices offer **Benign / Suspicious / Need more evidence**. See [screenshot provenance](docs/SCREENSHOTS.md).
+The live screenshot shows a completed historical response, so its pending approval buttons are no longer displayed. The historical structured-response workflow offered **YES — Approve LIVE 60s block** and **NO — Deny block / report only**. Current advisory review notices offer **Benign / Suspicious / Need more evidence**. See [screenshot provenance](docs/SCREENSHOTS.md).
 
 ## macOS lab requirements
 
@@ -182,7 +168,7 @@ curl --fail http://127.0.0.1:11434/api/tags
 
 Start the installed Ollama app first; if you deliberately run `ollama serve` instead, use only one server. The [official Ollama download](https://ollama.com/download/mac) and [quickstart](https://docs.ollama.com/quickstart) describe installation. The current code requires the exact model identity; substituting another tag requires a deliberate implementation/evaluation change.
 
-Review `live.ssh.local.json`, `runtime.ssh.live.local.json` and `response.local.json`. New initialization uses **dry run**, an empty plan registry and the instruction exported in `prompts/current.txt`. Existing files, prompts and plans are preserved, including an existing live-mode choice.
+Review `live.ssh.local.json`, `runtime.ssh.live.local.json` and `response.local.json`. New initialization uses **dry run**, an empty plan registry and the instruction exported in `prompts/current.txt`. Existing files, custom prompts and plans are preserved, including an existing live-mode choice. On startup, the dashboard upgrades the active prompt if it matches an older shipped default.
 
 **Checkpoint:** confirm the response mode yourself. A new reader should see `"mode": "dry_run"`; do not enable live mode yet.
 
@@ -275,17 +261,19 @@ Applied rules affect future sensor processing. Run fresh manual traffic to test 
 
 ### Save, compare and activate a prompt
 
-1. Open **Settings → Gemma prompt**, note **Active**, choose a **Saved version** and click **Load selected version**.
+1. Open **Settings → AI prompt**, note **Active**, choose a **Saved version** and click **Load selected version**.
 2. Edit **Instruction**, give it a **Version label**, then click **Save and validate version**. This stores a candidate; it does not activate it.
 3. Select a **Saved SSH incident** and the saved candidate, then click **Compare original vs selected prompt**. Inspect both new model results, errors and identical evidence hash. Comparisons need a reconstructable original instruction and share the inference queue with live work.
 4. To adopt a candidate, select that saved version and click **Activate selected version**. Verify the **Active** label/hash. Future requests use it; historical and in-flight requests keep their original instruction.
 5. To revert, select a previous saved version and activate it. Merely loading text or closing Settings does not change the active version.
 
-Comparisons collect no new logs, send no Telegram messages and perform no firewall actions. Saving/activating a prompt changes neither Python validators nor response policy. The Mac model remains `gemma4:e4b`; changing instructions is separate from changing/evaluating a model. See [prompt workflow and limitations](docs/DASHBOARD.md#5-save-compare-and-activate-a-prompt).
+Comparisons collect no new logs, send no Telegram messages and perform no firewall actions. Saved comparisons use Ollama. Change providers separately from the prompt. See [prompt workflow and limitations](docs/DASHBOARD.md#5-save-compare-and-activate-a-prompt).
 
 ### Read configuration and complete human review
 
-**Settings → Pipeline configuration** is read only: it explains grouping, log-arrival allowance, pre-alert context, approved evidence scope, model identity and token limits. The current Mac budgets are 65,536 context / 1,024 output tokens; capacity is not per-incident consumption. It is not a Python-code, credential or response-mode editor.
+Open **Settings → AI model selection**. Choose **Ollama** or **Gemini API**, enter the exact model ID and expected returned model version, then use **Test with synthetic evidence only** and **Activate provider/model**. Install the Ollama model on the Mac first. Activation applies to future assessments and invalidates pending legacy response approvals. The read-only tables show evidence timing and model budgets.
+
+Gemini uses a local `GEMINI_API_KEY` or ignored `.env.gemini`. A synthetic check requires a local allowance record. Sending new incident evidence requires a separate opt-in. See the [Gemini setup guide](docs/GEMINI_PROVIDER.md) for commands, version pinning and revocation.
 
 For an incident awaiting review, inspect its evidence, then use **Human review → Reviewer name → Your conclusion → optional Review notes → Save human review**. Benign/Suspicious resolves the human review; Need more evidence keeps it open. **Review history** retains older entries, and **Add follow-up review** records a new conclusion. Human review never overwrites the AI assessment or approves a firewall block. See [human review](docs/DASHBOARD.md#7-record-a-human-review).
 
@@ -295,9 +283,10 @@ For an incident awaiting review, inspect its evidence, then use **Human review �
 | Apply validated rule | New sensor processing after verified reload |
 | Save prompt | Stored candidate only |
 | Activate selected prompt | New assessment requests |
+| Activate provider/model | Future assessments use the selected route; saved evidence stays local |
 | Compare prompts | Two fresh requests on saved evidence only |
 | Save human review | Separate current-snapshot human conclusion |
-| Telegram block approval | Exact eligible request, after independent worker revalidation |
+| Historical Telegram block approval | Exact eligible structured request, after independent worker revalidation |
 
 ## Configuration and credentials
 
@@ -332,13 +321,13 @@ The loader also supports an existing local Python constants file through `creden
 
 ## Three manual scenarios
 
-Start with dry-run responses and verify every stage before moving to live mode. Run the helper manually, once per reviewed rehearsal, only against your own Victim lab.
+Run each case and verify the retained evidence, advisory report and operator conclusion. Run the helper manually, once per reviewed rehearsal, only against your own Victim lab.
 
 | Scenario | Manual activity | Evidence-dependent interpretation | Possible Telegram path |
 | --- | --- | --- | --- |
-| Approved test | Trust-Client uses `soc_test` inside an approved window and attempt limit | Benign when retained evidence supports the plan | Report only, or review if evidence is insufficient |
-| Unapproved activity | Kali makes bounded SSH attempts with no matching approved plan | Suspicious if the observed context supports that conclusion; no plan alone is not proof of attack | Eligible block approval, report only or manual review |
-| Scope violation | Trust-Client attempts `root` while its plan permits only `soc_test` | Recorded root attempt is outside account scope; Gemma assesses its significance | Eligible block approval, report only or manual review |
+| Approved test | Trust-Client uses `soc_test` inside an approved window and attempt limit | Benign when retained evidence supports the plan | Review notice with conclusion buttons |
+| Unapproved activity | Kali makes bounded SSH attempts with no matching approved plan | Suspicious if the observed context supports that conclusion; no plan alone is not proof of attack | Review notice with conclusion buttons |
+| Scope violation | Trust-Client attempts `root` while its plan permits only `soc_test` | Recorded root attempt is outside account scope; The selected model assesses its significance | Review notice with conclusion buttons |
 
 ### 1. Approved test — Trust-Client
 
@@ -364,7 +353,7 @@ Confirm no approved plan covers Kali `.4` at this time. Run once on **Kali**:
 python3 ~/soc-demo/ssh_demo_client.py --mode unapproved --execute
 ```
 
-Wait for the fixed correlation window and arrival allowance to finish. Read the evidence and AI recommendation. Eligible suspicious requests offer dry-run approval/denial first; live buttons appear only after deliberate live-mode activation. If the assessment requires review, use the review path instead of trying to force a block.
+Wait for the fixed correlation window and arrival allowance to finish. Read the evidence and AI recommendation, then record a separate conclusion using the review buttons.
 
 ### 3. Root attempt during an approved test — Trust-Client
 
@@ -382,7 +371,7 @@ The helper makes six deliberately failed attempts in two bursts separated by 12 
 
 ### Response approval
 
-An eligible Suspicious assessment with a supported block recommendation can ask:
+The historical structured-assessment path could produce an eligible firewall approval. New SSH advisory reports use the review options below. For historical workflow reference, an eligible request asked:
 
 > Do you authorize blocking this source from accessing the victim's SSH service for 1 minute?
 
@@ -394,7 +383,7 @@ An eligible Suspicious assessment with a supported block recommendation can ask:
 
 Live buttons explicitly say **YES — Approve LIVE 60s block** and **NO — Deny block / report only**. Dry-run buttons explicitly identify the simulation. Test-plan approval is separate from response approval.
 
-After the dry-run rehearsal passes, follow [live-mode activation and verification](docs/MACOS.md#8-enable-and-verify-live-response) to deliberately set `mode: live`, `duration_seconds: 60` and a fresh UTC `live_enabled_after`, then restart the monitor. This is an operator configuration step, not something the model performs.
+The guarded live-response code and its historical receipts remain available for reference. The diagram shows how an authorized structured-response request was executed.
 
 ```mermaid
 sequenceDiagram
@@ -420,7 +409,7 @@ The deny affects the source IP's access to **Victim TCP/22**, not all network tr
 
 ### Manual investigation review
 
-Insufficient evidence, a model request for more evidence or a validation error can lead to a manual-review notice:
+New SSH incidents enter operator review after a plain-text advisory report or an assessment error:
 
 - **🟢 Benign:** save the human conclusion and resolve the review.
 - **🔴 Suspicious:** save the human conclusion and resolve the review.
@@ -450,7 +439,7 @@ Before another rehearsal, verify guest addresses, routes, SSH host-key identity 
 | Original Mac/UTM three manual scenarios | Exercised with retained evidence, reports and review paths |
 | Original Telegram-approved live response | Actual source-specific deny and automatic rollback exercised and observed |
 | Fresh third-party deployment | Setup steps must be independently verified on that machine; not established by CI |
-| Reliable classification of arbitrary activity | **Not established**; explanations and factual validation have known limits |
+| Reliable classification of arbitrary activity | **Not established**; advisory output is reviewed against the retained evidence |
 
 ### Reproduce software checks
 
@@ -461,13 +450,13 @@ node --check web/experiments.js
 git diff --check
 ```
 
-CI runs isolated software checks. It does not provision guests, invoke Ollama, send Telegram messages, generate attacks or apply firewall rules. Optional actual-model evaluation uses synthetic fixtures and local Ollama:
+CI runs isolated software checks. It does not provision guests, invoke Ollama, send Telegram messages, generate attacks or apply firewall rules. For a current model smoke test, use **Settings → AI model selection → Test with synthetic evidence only**. The legacy structured Ollama evaluator remains available for historical comparisons:
 
 ```sh
 python3 verify_gemma.py --output verification-gemma-direct.json
 ```
 
-A successful model call or valid JSON does not establish a correct security judgment. Preserve the evidence, prompt version, errors and coverage; repeatedly generating incidents until the desired label appears is not verification.
+Read the advisory report alongside the retained evidence before recording a conclusion. Preserve the evidence, prompt version, errors and coverage; repeatedly generating incidents until the desired label appears is not verification.
 
 ### Common problems
 

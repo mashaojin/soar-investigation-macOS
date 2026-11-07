@@ -2,9 +2,9 @@
 
 ## Settings panel
 
-- **Gemma prompt:** save a version, compare it on saved evidence, then explicitly activate it. Activation affects future assessment requests, not historical reports or an in-flight request. `prompts/current.txt` is the final instruction exported at repository preparation; a fresh local setup seeds it. `prompts/default.txt` records the built-in fallback instruction.
+- **AI prompt:** save a version, compare it on saved evidence, then explicitly activate it. Activation affects future assessment requests, not historical reports or an in-flight request. `prompts/current.txt` is the shipped plain-text advisory instruction; a fresh local setup seeds it. `prompts/default.txt` records the built-in fallback instruction.
 - **Suricata rule:** read the actual victim rule through its fixed helper, edit the allowed fields, validate, inspect the diff, then explicitly apply. Applying uses the helper's fixed path, configuration test, reload and rollback checks. Host-side edits alone do not change the victim.
-- **Pipeline configuration:** read-only explanations of correlation timing, approved scope, AI/Python roles, model identity and token budgets. These are not editable Python source. The model has a configured 65,536-token context capacity and 1,024-token output limit; capacity is not per-incident consumption.
+- **AI model selection:** choose Ollama or Gemini API for future assessments. The same panel has read-only explanations of correlation timing, approved scope, AI/Python roles, model identity and token budgets. These are not editable Python source. The model has a configured 65,536-token context capacity and 1,024-token output limit; capacity is not per-incident consumption.
 
 The rule editor controls one SSH rule, not arbitrary files or shell commands. Unknown deployment status requires reading current victim state before another apply.
 

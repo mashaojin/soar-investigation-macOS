@@ -147,6 +147,8 @@ class Handler(BaseHTTPRequestHandler):
         if not self.allowed(write=True): return
         path=urlsplit(self.path).path
         actions={
+            '/api/providers/activate':self.server.providers.activate,
+            '/api/providers/check':self.server.providers.check,
             '/api/prompts/save':self.server.experiments.save_prompt,
             '/api/prompts/activate':self.server.experiments.activate,
             '/api/experiments/compare':self.server.experiments.start_comparison,
@@ -204,6 +206,8 @@ def make_server(root=ROOT, port=8765):
     server.experiments=ExperimentStore(server.root)
     server.rules=RuleEditor(server.root)
     server.reviews=ReviewService(server.root)
+    from provider_service import ProviderService
+    server.providers=ProviderService(server.root)
     return server
 
 

@@ -129,13 +129,13 @@ A failed activation attempts to restore the earlier file. Treat an `unknown`, er
 
 ## 5. Save, compare and activate a prompt
 
-The macOS tab is labeled **Gemma prompt**. The current implementation uses the exact local model `gemma4:e4b`; instructions are versioned separately from model identity.
+The macOS tab is labeled **AI prompt**. Ollama with `gemma4:e4b` is the default. Instructions are versioned separately from provider and model identity.
 
 Prompt changes affect model instructions. They do not change the Suricata rule, Python evidence collection, JSON schema, fact/coverage validators or response policy. Saving or activating a prompt does not qualify a model for live response.
 
 ### Save a candidate without activating it
 
-1. Open **Settings → Gemma prompt** and note the label/hash beside **Active**.
+1. Open **Settings → AI prompt** and note the label/hash beside **Active**.
 2. Choose a **Saved version** and click **Load selected version** to put its text into the editor. Merely selecting the dropdown does not load it. **Load default draft** loads the built-in instruction into a draft; it does not restore the active version automatically.
 3. Edit **Instruction**, changing one thing for the experiment, and give it a meaningful **Version label**, such as `Explain evidence limitations clearly`.
 4. Click **Save and validate version**. Check for the saved/validated confirmation and selected candidate. Instructions must be 200–12,000 UTF-8 bytes with no NUL; labels must be 1–80 characters. A saved-evidence input-budget check may also reject a candidate.
@@ -168,7 +168,7 @@ A “current active version changed” conflict means another activation occurre
 
 ## 6. Read pipeline configuration
 
-Open **Settings → Pipeline configuration**. This is explicitly **read only**; it has no Apply or Save control.
+Open **Settings → AI model selection** to choose Ollama or Gemini API, pin the model version, test synthetic evidence and activate the selection. The evidence and token tables below the selector are read only. See [Gemini setup](GEMINI_PROVIDER.md). Saved-evidence comparisons run with Ollama.
 
 | Item | Why it matters |
 | --- | --- |
@@ -181,7 +181,7 @@ Open **Settings → Pipeline configuration**. This is explicitly **read only**; 
 | Context capacity | Configured input/output capacity; not token usage for every incident |
 | Output limit | The generation cap; a cut-off response is not accepted as complete |
 
-The current Mac implementation displays `gemma4:e4b`, 65,536-token configured context capacity and a 1,024-token output cap. These are not editable in the dashboard. Capacity is not token usage per incident; input construction, bounded output and validation still apply.
+The table displays the selected model, 65,536-token configured context capacity and a 1,024-token output cap. The two token limits are fixed. Capacity is not token usage per incident; input construction, bounded output and validation still apply.
 
 Changing a prompt does not change these controls. Changing source constants or platform configuration is a separate reviewed operation with appropriate restart/testing, outside this panel. The panel is not an editor for credentials, guest networking, response authorization or arbitrary Python code.
 

@@ -149,6 +149,7 @@ def validate_identity(values):
 
 def reason_for_review(incident):
     report=incident.get('report') or {};error=incident.get('error') or ''
+    if report.get('format')=='advisory_text':return 'An advisory assessment is ready for human review.'
     if report.get('recommended_action')=='REQUEST_MORE_EVIDENCE':return 'Gemma requested more evidence before a response decision.'
     if report.get('verdict')=='INSUFFICIENT_EVIDENCE':return 'Gemma could not reach a conclusive assessment from the available evidence.'
     if 'No authentication outcomes' in error:return 'A network alert was detected, but no matching SSH authentication outcomes were found in the retained evidence window.'
@@ -163,6 +164,10 @@ def notification_message(incident,identity,notification_id=None):
         +header(incident)+
         f"Reason: {reason_for_review(incident)}\n"
         f"http://127.0.0.1:8765/#incident={incident['incident_id']}")
+    report=incident.get('report') or {}
+    if report.get('format')=='advisory_text':
+        prose=report['reason']
+        text+='\n\nAI assessment (excerpt):\n'+prose[:600]+('…' if len(prose)>600 else '')
     payload=dict(chat_id=identity['chat_id'],text=text)
     if notification_id:
         payload['reply_markup']={'inline_keyboard':[
@@ -208,7 +213,8 @@ def deliver_notifications(db_path,policy,client,identity):
         if enabled:
             rows=db.execute('''SELECT i.incident_id FROM incidents i JOIN analyses a
                 ON a.incident_id=i.incident_id AND a.revision=i.revision
-                WHERE i.status='manual_review' AND a.status='manual_review' AND a.report IS NULL
+                WHERE i.status='manual_review' AND a.status='manual_review'
+                AND (a.report IS NULL OR json_extract(a.report,'$.format')='advisory_text')
                 AND datetime(a.created_at)>=datetime(?)''',(enabled,)).fetchall()
             for row in rows:
                 incident=attach(db,load_incident(db,row['incident_id']))

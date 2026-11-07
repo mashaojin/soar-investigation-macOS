@@ -40,7 +40,7 @@ def plan_view(plan, now=None):
 def authorization(incident,plans,now,plan_error=None):
     metadata=incident.get('metadata',{})
     direct=metadata.get('investigation')
-    if metadata.get('engine')=='ollama_direct' and direct:
+    if metadata.get('engine') in ('ollama_direct','gemini_direct') and direct:
         evidence=direct['plan_evidence']
         plan=evidence['plan']
         return {'source':'recorded','plan':plan_view(plan,now) if plan else None,
@@ -74,6 +74,9 @@ def incident_view(incident,plans,now=None,plan_error=None):
     response=approval.get('status')
     report=incident.get('report')
     ai_verdict=(report or {}).get('verdict')
+    if report and report.get('format')=='advisory_text':
+        label=re.match(r'\s*(?:Assessment|Verdict)\s*:\s*(Benign|Suspicious)\b', report['reason'], re.I)
+        ai_verdict=label[1].upper() if label else None
     if ai_verdict not in ('BENIGN','SUSPICIOUS','INSUFFICIENT_EVIDENCE'): ai_verdict=None
     human=incident.get('human_review')
     resolved=bool(human and human['conclusion'] in ('BENIGN','SUSPICIOUS'))
@@ -111,7 +114,7 @@ def incident_view(incident,plans,now=None,plan_error=None):
     else: code,label='queued','Queued for AI assessment'
     details={'human_resolved':'The operator’s conclusion is recorded separately from the AI assessment. No firewall action was authorized by this review.',
              'manual_review':('Gemma recorded an assessment and requested more evidence. No additional evidence collection or firewall response runs automatically.' if more_evidence else 'The investigation needs human review. This workflow status is separate from any recorded AI verdict.'),
-             'investigating':'The worker is collecting SSH evidence or requesting a direct Gemma assessment. These phases are not separately recorded.',
+             'investigating':'The worker is collecting SSH evidence or requesting an AI assessment. These phases are not separately recorded.',
              'waiting':'The complete evidence window must close before assessment.',
              'queued':'Waiting for the worker and collection catch-up; this page does not assert monitor health.',
              'notified':'A report was delivered. No response approval was required.',
