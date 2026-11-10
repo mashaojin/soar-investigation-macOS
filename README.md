@@ -8,7 +8,7 @@ This is the original **Mac / UTM / Gemma4** implementation, previously named `so
 
 **Suricata → Python correlation and SSH evidence → a bounded AI advisory report → report only or operator review.**
 
-Ollama with Gemma4 is the default. Google Gemini API is optional and requires separate local authorization before new incident evidence can be sent. Python collects evidence and checks the report's length and citation IDs. The operator records the final conclusion. This is an educational lab and runs without Hermes.
+Ollama with Gemma4 is the default. Google Gemini API is optional and requires separate local authorization before new incident evidence can be sent. Python collects evidence and checks the report's length and citation IDs. The operator records the final conclusion. 
 
 ## Contents
 
