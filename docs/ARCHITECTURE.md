@@ -5,7 +5,7 @@ Victim EVE JSON --SSH--> Python monitor --> durable events + correlated incident
                                            |
                               scoped SSH journal + approved plan
                                            |
-                              one bounded direct Ollama request
+                              bounded primary assessment request
                                            |
                          validated AI assessment and recommendation
                                            |
@@ -51,3 +51,5 @@ Human review stores the operator conclusion separately from the AI report. Benig
 ## Reproducibility boundary
 
 Offline tests use synthetic fixtures and mocked external effects. Saved-evidence comparisons call the model with identical saved evidence and differing prompts; they cannot reproduce traffic absent from that evidence or test a new sensor rule on old traffic. New network/rule behavior requires a fresh manual lab rehearsal.
+
+For eligible SSH reports, local ATT&CK context is passed to Ollama in the primary assessment request and can influence the advisory interpretation. The note is separate from observations and recorded authorization. Response gates continue to use the existing evidence checks and operator approvals. See [retrieval and evaluation](../README.md#mitre-attck-context-for-ssh).

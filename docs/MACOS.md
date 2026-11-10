@@ -25,7 +25,7 @@ A private repository requires your GitHub account to have access. Existing local
 
 ## 2. Create the guests and match the network
 
-Create three independent Linux guests. On Apple Silicon, obtain the appropriate official ARM64 Ubuntu/Kali images; do not assume an x86 VirtualBox appliance is interchangeable with a UTM ARM guest. Set the UTM display names and normal guest accounts exactly:
+Create three independent Linux guests. On Apple Silicon, obtain the appropriate official ARM64 Ubuntu/Kali images; do not assume an x86 VirtualBox appliance is interchangeable with a UTM ARM guest. The original lab uses these defaults:
 
 | UTM name | OS | Guest user | Address |
 | --- | --- | --- | --- |
@@ -35,9 +35,17 @@ Create three independent Linux guests. On Apple Silicon, obtain the appropriate 
 
 Use UTM **macOS Shared Network**, with host/guest isolation disabled, so the guests can reach one another and the Mac. Separate emulated VLANs do not provide the same topology. See [UTM network modes](https://docs.getutm.app/settings-qemu/devices/network/network/).
 
-Use the guests' network settings to assign stable, unused addresses on the shared `192.168.64.0/24` subnet. For this topology the verified host/gateway is `192.168.64.1`; inspect the actual UTM network first. Ubuntu Desktop/Kali can use their NetworkManager IPv4 settings; Ubuntu Server uses its existing Netplan interface configuration. Preserve the correct interface name, set the /24 prefix and actual gateway/DNS, and avoid competing DHCP/duplicate static assignments. Perform initial changes from the guest console so a bad route does not strand an SSH session.
+Use the guests' network settings to assign stable, unused addresses on your shared subnet. Inspect the actual UTM network for its prefix and gateway. The default subnet is `192.168.64.0/24`, with `192.168.64.1` as the Mac management source. Ubuntu Desktop/Kali can use their NetworkManager IPv4 settings; Ubuntu Server uses its existing Netplan interface configuration. Preserve the correct interface name, set the subnet prefix and actual gateway/DNS, and avoid competing DHCP/duplicate static assignments. Perform initial changes from the guest console so a bad route does not strand an SSH session.
 
-If your shared network is a different subnet or `.4`, `.6`, `.8` are occupied, stop here. The current code hardcodes these identities in evidence collection, demo clients, rule transport and live guards. Changing JSON alone cannot port them. Either create the specified isolated lab topology or review a full code/config/test port.
+For alternate names or addresses, create the topology on the Mac from the checkout:
+
+```sh
+cp -n config/topology.example.json topology.local.json
+```
+
+Edit `topology.local.json` to match the three UTM names, guest usernames and IPv4 addresses. Use plain IPv4 addresses without prefixes. Set `management_ip` to the Mac source confirmed by the [Victim SSH check](#4-establish-verified-mac-to-victim-ssh). All four addresses must be distinct. Use the default values in command examples below only if they match your setup. Substitute your configured addresses, usernames and UTM names wherever they appear.
+
+With a local topology present, its identities take precedence over the SSH target and IP filters in the collector config and the victim and client addresses in the response policy. Existing additional protected IPs still apply. The policy still controls response mode, approval and duration. To move an existing lab, finish any pending live response and confirm rollback, stop the monitor and dashboard, then update the file. Re-establish SSH trust, restage both clients, create fresh plans for the new IPs and restart both services. A new SSH target gets a separate EVE cursor. Review the initial baseline before running traffic.
 
 On **each guest**, inspect:
 
@@ -54,7 +62,7 @@ On **each client**:
 ip -4 route get 192.168.64.6
 ```
 
-The route's source must be `.4` on Kali and `.8` on Trust-Client. Compare host/guest UTC clocks and correct time synchronization before creating plans. The test-plan form shows the browser timezone and stores UTC; incident labels/Telegram timestamps use `America/Vancouver`.
+The route's source must match the configured IP for each client. Compare host/guest UTC clocks and correct time synchronization before creating plans. The test-plan form shows the browser timezone and stores UTC; incident labels/Telegram timestamps use `America/Vancouver`.
 
 **Checkpoint:** `utmctl list` on the Mac shows all three exact names, guest addresses/routes are correct and clocks agree. A guessed IP is not readiness.
 
@@ -113,7 +121,7 @@ Choose its password locally and keep it different from the helper's deliberately
 
 ### Load the fixed SSH rule — Victim
 
-Determine the interface carrying `.6` with `ip -4 -br address`. The examples below use `enp0s1`; replace the interface name if yours differs.
+Determine the interface carrying the configured Victim IP with `ip -4 -br address`. The examples below use `enp0s1`; replace the interface name if yours differs.
 
 Create the rule from the repository's `rules/ssh_bruteforce.rules`. On Victim, the equivalent content is:
 
@@ -198,7 +206,7 @@ sudo ufw enable
 sudo ufw status numbered
 ```
 
-**Checkpoint:** UFW is active and ordinary SSH is reachable. Existing source-specific rules for `.4` or `.8` must be reviewed before a live test because the guard refuses ambiguous starting state. These steps do not install any temporary response deny.
+**Checkpoint:** UFW is active and ordinary SSH is reachable. Existing source-specific rules for either configured client must be reviewed before a live test because the guard refuses ambiguous starting state. These steps do not install any temporary response deny.
 
 ## 4. Establish verified Mac-to-Victim SSH
 
@@ -237,7 +245,7 @@ From a **new Mac connection**, verify noninteractive evidence access and the obs
 ssh -o BatchMode=yes victim@192.168.64.6 'id; printf "%s\n" "$SSH_CONNECTION"; test -r /var/log/suricata/eve.json; journalctl -u ssh.service -n 3 --no-pager -o json --output-fields=__REALTIME_TIMESTAMP,MESSAGE,_UID'
 ```
 
-**Checkpoint:** there is no password/host-key prompt, the connection source is the intended `.1` management address, EVE is readable and the journal contains readable root-origin records (`_UID: "0"`). A command returning no rows is not successful coverage. Start a fresh session after changing groups; a cached SSH master may retain old group membership. If necessary, stop the lab's old SSH master deliberately and reconnect before proceeding.
+**Checkpoint:** there is no password/host-key prompt, the first field of `SSH_CONNECTION` matches `management_ip` and its last two fields match the Victim IP and port 22, EVE is readable and the journal contains readable root-origin records (`_UID: "0"`). A command returning no rows is not successful coverage. Start a fresh session after changing groups; a cached SSH master may retain old group membership. If necessary, stop the lab's old SSH master deliberately and reconnect before proceeding.
 
 Establish the same verified Victim host-key trust from each **client VM** before using its demo helper. On each client, compare the prompt with Victim's console fingerprint:
 
@@ -245,7 +253,7 @@ Establish the same verified Victim host-key trust from each **client VM** before
 ssh -o StrictHostKeyChecking=ask -o NumberOfPasswordPrompts=0 victim@192.168.64.6 true
 ```
 
-With no client administration key configured, authentication may end in Permission denied; this step establishes host identity rather than successful access. The helper's `accept-new` setting is not a replacement for fingerprint verification.
+With no client administration key configured, authentication may end in Permission denied; this step establishes host identity rather than successful access. The demo helper requires the verified key in the invoking guest account’s known-hosts file.
 
 ## 5. Verify UTM guest execution and stage clients
 
@@ -269,7 +277,7 @@ UTM=/Applications/UTM.app/Contents/MacOS/utmctl
 "$UTM" file pull Victim /tmp/soar-agent-check.json
 ```
 
-Read `{"uid": 0}` from the pulled receipt. Repeat with the exact names `Kali Linux` and `Trust-Client`. UTM execution may return before the guest finishes: if the receipt is not yet available, wait briefly and read it again rather than repeatedly dispatching commands or assuming empty stdout means success. This is an explicit root-capable lab transport; do not interpret the unprivileged `victim` SSH login as equivalent permission.
+Read `{"uid": 0}` from the pulled receipt. Repeat with the configured Kali and trusted-client UTM names. Quote VM names that contain spaces. UTM execution may return before the guest finishes: if the receipt is not yet available, wait briefly and read it again rather than repeatedly dispatching commands or assuming empty stdout means success. This is an explicit root-capable lab transport; do not interpret the unprivileged `victim` SSH login as equivalent permission.
 
 On the **Mac**, stage the client helper:
 
@@ -277,7 +285,7 @@ On the **Mac**, stage the client helper:
 python3 stage_demo_clients.py
 ```
 
-It copies to `/home/kali/soc-demo/ssh_demo_client.py` and `/home/trust-client/soc-demo/ssh_demo_client.py`, pulls the bytes back and verifies their SHA-256. It does not execute the helper.
+It copies the client script, topology module and effective topology into `/home/<configured-user>/soc-demo/` on each client, then pulls each file back and verifies its bytes. The staging step generates no test traffic.
 
 On the **named client**:
 
@@ -304,7 +312,7 @@ ollama list
 curl --fail http://127.0.0.1:11434/api/tags
 ```
 
-Start the Ollama app before checking its API, or intentionally run one `ollama serve` instance. `gemma4:e4b` must appear. This code validates model identity and uses one bounded request per assessment; a different model tag is not an interchangeable configuration shortcut. See the [official local-model quickstart](https://docs.ollama.com/quickstart).
+Start the Ollama app before checking its API, or intentionally run one `ollama serve` instance. `gemma4:e4b` must appear. The code validates model identity for each request. An eligible Ollama SSH report can include local ATT&CK context in its primary assessment request. See the [retrieval setup and evaluation](../README.md#mitre-attck-context-for-ssh). See the [official local-model quickstart](https://docs.ollama.com/quickstart).
 
 Initialization creates absent local JSON, an empty plan registry and a new prompt store seeded from `prompts/current.txt`. Existing state is preserved. Check response mode without printing credentials:
 
@@ -370,7 +378,7 @@ For a plain-text SSH advisory, record Suspicious in the dashboard or Telegram. E
 
 Do this only after the dry-run checks and deliberate review of `live_response.py` and `live_lab_guard.py`. Victim must have active UFW, a working root guest-agent path, a functioning systemd timer and no ambiguous existing source-specific rule. Keep guest consoles available and do not suspend/reboot Victim during a block.
 
-Wait for previous work to finish, stop the monitor, and review the exact live scope in `response.local.json`: permitted sources `.4`/`.8`, target `.6`, port 22, protected `.1`/`.6`, duration 60 and approval TTL 600 seconds. Activate only new incidents using a current UTC timestamp:
+Wait for previous work to finish, stop the monitor, and review the effective scope from the topology and `response.local.json`. Only the configured clients may be blocked, only to Victim TCP/22, for 60 seconds after explicit approval. The worker verifies the management source using a fresh, host-key-verified SSH session before dispatch. Activate only new incidents using a current UTC timestamp:
 
 ```sh
 python3 - <<'PY'

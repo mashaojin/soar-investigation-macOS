@@ -92,7 +92,8 @@ class PlanEditor:
         return path if path.is_absolute() else self.root/path
 
     def config(self):
-        return json.loads((self.root/'live.ssh.local.json').read_text())
+        from topology import collector_config
+        return collector_config(json.loads((self.root/'live.ssh.local.json').read_text()), self.root)
 
     def validate(self, values, now=None):
         now=now or datetime.now(timezone.utc)

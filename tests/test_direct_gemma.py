@@ -108,7 +108,7 @@ class DirectValidationTests(unittest.TestCase):
             with sqlite3.connect(db) as con:
                 con.execute('CREATE TABLE incidents (incident_id TEXT,revision INTEGER,evidence TEXT,alert_count INTEGER,status TEXT)')
                 con.execute('INSERT INTO incidents VALUES (?,?,?,?,?)',('i',1,json.dumps(e),1,'pending'))
-            runtime={'ssh_enrichment':True,'approved_plans':'unused'}
+            runtime={'ssh_enrichment':True,'approved_plans':'unused','attack_retrieval':False}
             with patch('ssh_live_investigation.ready_after',return_value=datetime(2026,1,1,tzinfo=timezone.utc)),patch('ssh_live_investigation.prepare_live_job',return_value=('',j)):
                 runner=MagicMock(return_value={'text':'Observed accounts are in scope [P1].','request_count':1})
                 self.assertEqual(analyze_next(db,runtime,runner=runner)['status'],'manual_review')
@@ -128,7 +128,7 @@ class DirectValidationTests(unittest.TestCase):
                 con.execute('INSERT INTO incidents VALUES (?,?,?,?,?)',('i',1,json.dumps(e),1,'pending'))
             runner=MagicMock(return_value={'text':'Journal coverage is limited [E2].','request_count':1})
             with patch('ssh_live_investigation.ready_after',return_value=datetime(2026,1,1,tzinfo=timezone.utc)),patch('ssh_live_investigation.prepare_live_job',return_value=('',j)):
-                result=analyze_next(db,{'ssh_enrichment':True,'approved_plans':'unused'},runner=runner)
+                result=analyze_next(db,{'ssh_enrichment':True,'approved_plans':'unused','attack_retrieval':False},runner=runner)
             self.assertEqual(result['status'],'manual_review');runner.assert_called_once()
             with sqlite3.connect(db) as con:m=json.loads(con.execute('SELECT metadata FROM analyses').fetchone()[0])
             self.assertEqual(m['request_count'],1);self.assertEqual(m['request_attempts'],1)

@@ -10,6 +10,7 @@ import subprocess
 import time
 
 from response import initialize as response_initialize, audit, current_live_plan, canonical, fingerprint, refresh_requests
+from topology import DEFAULT, UTM, clients, ssh_target, verify_management
 from assessment_facts import VERSION, has_observations, observed_claims, validate_claims
 
 
@@ -30,7 +31,7 @@ def validate_live_evidence(evidence, report, metadata, policy, now, *, reviewed=
         or job.get('origin')!='live_read_only' or auth.get('coverage')!='observed_window'
         or auth.get('limited') is not False
         or any(checks.get(k) is not True for k in ('query_not_limited','retained_entry_before_start','root_service_records','window_elapsed'))
-        or auth.get('source_ip') not in policy['allowed_attacker_ips'] or auth.get('source_ip')!=evidence.get('source_ip') or auth.get('target_ip')!='192.168.64.6'
+        or auth.get('source_ip') not in policy['allowed_attacker_ips'] or auth.get('source_ip')!=evidence.get('source_ip') or auth.get('target_ip')!=policy['victim_ip']
         or metadata.get('assessment_version')!=VERSION
         or type(auth.get('failed_password_count')) is not int or auth['failed_password_count']<0 or not has_observations(auth)
         or auth.get('successful_login_count')!=0 or 'plan' not in job.get('plan_evidence',{})):
@@ -107,37 +108,44 @@ def claim(db_path,policy,identity,now=None):
 
 
 class LabExecutor:
-    def __init__(self, source='192.168.64.4'):
-        if source not in ('192.168.64.4','192.168.64.8'):
+    def __init__(self, source=None, topology=DEFAULT):
+        self.topology = topology
+        self.source = source or topology['kali']['ip']
+        if self.source not in clients(topology):
             raise ValueError('Unsupported lab client')
-        self.source=source
 
     def probe(self):
         from live_lab import client_probe
-        return client_probe(secrets.token_hex(12),self.source)
+        return client_probe(secrets.token_hex(12), self.source, self.topology)
 
     def read(self,run_id):
         if not re.fullmatch('[0-9a-f]{24}',run_id): raise ValueError('Invalid guard ID')
         return self.remote("import json; from pathlib import Path; print(Path("+repr('/run/soc-lab-tests/'+run_id+'/state.json')+").read_text())")
 
-    def remote(self,code):
+    def remote(self,code, *, fresh=False):
         from live import ssh_command
-        r=subprocess.run(ssh_command({'ssh_target':'victim@192.168.64.6'},code),capture_output=True,text=True,timeout=15,check=True)
+        command = ssh_command({'ssh_target': ssh_target(self.topology)}, code)
+        if fresh:
+            command[1:1] = ['-o', 'ControlPath=none']
+        r = subprocess.run(command, capture_output=True, text=True, timeout=15, check=True)
         if len(r.stdout)>65536: raise ValueError('Guard receipt too large')
         return json.loads(r.stdout)
 
     def management(self):
-        return self.remote("import json,os; print(json.dumps({'reachable':True,'connection':os.environ.get('SSH_CONNECTION')}))")
+        result = self.remote("import json,os; print(json.dumps({'reachable':True,'connection':os.environ.get('SSH_CONNECTION')}))", fresh=True)
+        verify_management(result.get('connection'), self.topology)
+        return result
 
     def dispatch(self,run_id):
         source=Path(__file__).with_name('live_lab_guard.py').read_text()
-        subprocess.run(['/Applications/UTM.app/Contents/MacOS/utmctl','exec','Victim','--cmd','/usr/bin/python3','-c',source,run_id,self.source],
+        subprocess.run([UTM, 'exec', self.topology['victim']['name'], '--cmd', '/usr/bin/python3', '-c',
+                        source, run_id, self.source, json.dumps(self.topology)],
                        capture_output=True,timeout=15,check=True)
 
 
-def verify_receipt(state,run_id,source='192.168.64.4'):
+def verify_receipt(state, run_id, source, destination):
     if (state.get('run_id')!=run_id or state.get('source')!=source
-        or state.get('destination')!='192.168.64.6' or state.get('port')!=22 or state.get('duration_seconds')!=60):
+        or state.get('destination')!=destination or state.get('port')!=22 or state.get('duration_seconds')!=60):
         raise ValueError('Guest receipt does not match approved guard scope')
     tag='soc-lab-'+run_id
     if state.get('stage')=='rolled_back' and (not state.get('firewall_after') or tag in state['firewall_after']):
@@ -149,12 +157,14 @@ def run_one(db_path,policy,identity,executor=None,*,wait=time.sleep):
     if policy['mode']!='live': return False
     work=claim(db_path,policy,identity)
     if work is None: return False
-    row,result=work; request=row['request_id']; run_id=result['run_id']; source=result['plan']['source_ip']; executor=executor or LabExecutor(source)
+    row,result=work; request=row['request_id']; run_id=result['run_id']; source=result['plan']['source_ip']; executor=executor or LabExecutor(source, result['plan'].get('topology', DEFAULT))
     dispatched=False
     try:
         result['baseline']=executor.probe()
         if result['baseline'].get('reachable') is not True or result['baseline'].get('actual_source')!=source:
             raise ValueError('Source baseline connectivity not verified; no dispatch')
+        if executor.management().get('reachable') is not True:
+            raise ValueError('Management connectivity not verified; no dispatch')
         # Revalidate immediately before the one irreversible dispatch boundary.
         with closing(sqlite3.connect(db_path,timeout=10)) as db:
             now=int(time.time())
@@ -170,7 +180,7 @@ def run_one(db_path,policy,identity,executor=None,*,wait=time.sleep):
             try: state=executor.read(run_id)
             except (OSError,ValueError,subprocess.SubprocessError):
                 wait(2); continue
-            verify_receipt(state,run_id,source)
+            verify_receipt(state, run_id, source, result['plan']['destination_ip'])
             if state['stage']=='applied' and not blocked_checked:
                 result['applied_state']=state
                 result['blocked_probe']=executor.probe()
@@ -205,12 +215,12 @@ def reconcile(db_path,executor=None):
     for row in rows:
         result=json.loads(row['result'])
         source=result['plan']['source_ip']
-        executor=supplied_executor or LabExecutor(source)
+        executor=supplied_executor or LabExecutor(source, result['plan'].get('topology', DEFAULT))
         try:
             if row['status']=='live_preparing':
                 result['error']='Interrupted before dispatch; action not resumed'
                 save(db_path,row['request_id'],'live_failed',result); continue
-            state=executor.read(row['run_id']); verify_receipt(state,row['run_id'],source)
+            state=executor.read(row['run_id']); verify_receipt(state, row['run_id'], source, result['plan']['destination_ip'])
             result['reconciled_state']=state
             if state['stage']=='rolled_back':
                 result['recovery_probe']=executor.probe()

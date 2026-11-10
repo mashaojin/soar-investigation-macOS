@@ -67,6 +67,7 @@ def database_snapshot(path):
 
 
 def snapshot(root=ROOT):
+    from topology import collector_config, load
     from approved_plans import load_plans
     from dashboard_view import incident_view, plan_view
     now=datetime.now(timezone.utc)
@@ -86,15 +87,16 @@ def snapshot(root=ROOT):
     except (OSError,ValueError,KeyError,TypeError):
         plans=[]
         result['plan_error']='Dashboard plan registry unavailable; review its configuration.'
-    result['plans']=[plan_view(p,now) for p in plans]
+    topology = load(root)
+    result['plans']=[plan_view(p,now,topology) for p in plans]
     eligible=[p for p in result['plans'] if p['approval_status']=='approved' and p['timing'] in ('active','upcoming')]
     result['next_plan']=min(eligible,key=lambda p:(p['timing']!='active',p['start'])) if eligible else None
     for incident in result['history']['incidents']:
         incident['view']=incident_view(incident,plans,now,result.get('plan_error'))
     try:
-        live=json.loads((root/'live.ssh.local.json').read_text())
+        live=collector_config(json.loads((root/'live.ssh.local.json').read_text()), root)
         result['editor_options']={'source_ips':live['source_ips'], 'target_ip':live['destination_ip'],
-                                  'maximum_window_minutes':10}
+                                  'preferred_source_ip':topology['trusted']['ip'], 'maximum_window_minutes':10}
     except (OSError, ValueError, KeyError): result['editor_options']=None
     return result
 

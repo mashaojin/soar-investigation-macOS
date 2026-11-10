@@ -134,7 +134,7 @@ class CorrelationTests(unittest.TestCase):
     def analyze(self,now='2026-11-04T06:46:00+00:00'):
         from ssh_live_investigation import prepare_live_job as prepare
         with patch('ssh_live_investigation.prepare_live_job',side_effect=lambda i,e,p:prepare(i,e,p,self.collector)):
-            return analyze_next(self.db,dict(ssh_enrichment=True,approved_plans=str(self.plans)),
+            return analyze_next(self.db,dict(ssh_enrichment=True,approved_plans=str(self.plans),attack_retrieval=False),
                 now=datetime.fromisoformat(now),runner=self.runner)
 
     def test_plan_three_alert_minutes_one_advisory_per_revision(self):

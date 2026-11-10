@@ -24,7 +24,7 @@
 </section>
 <section class="assessment"><div class="section-heading"><h3>AI security judgment</h3><span class="muted small" id="model-name"></span></div><p id="reason" class="assessment-reason"></p><ul id="recommendations"></ul><p class="muted small" id="limits"></p></section>
 <section class="evidence-section"><div class="section-heading"><h3>Observed facts</h3><span class="muted small" id="tool-count"></span></div><p class="muted small">Scoped collected evidence with source, time window and coverage limits. Suricata connection alerts alone do not prove failed passwords or compromise.</p><div id="tools"></div></section>
-<section class="evidence-section"><h3>Python scope comparisons</h3><p class="muted small">Recorded authorization, account and attempt-limit comparisons. The AI interprets these comparisons alongside the observed evidence.</p><div id="policy-findings"></div></section><div id="incident-technical"></div>
+<section class="evidence-section"><h3>Python scope comparisons</h3><p class="muted small">Recorded authorization, account and attempt-limit comparisons. The AI interprets these comparisons alongside the observed evidence.</p><div id="policy-findings"></div></section><section id="attack-background" class="evidence-section" hidden><h3>MITRE ATT&amp;CK background</h3><p class="muted small">Sources for behavioral interpretation. Incident observations and test-plan findings are shown separately.</p><div id="attack-background-body"></div></section><div id="incident-technical"></div>
 </div></article>
 <aside class="context-column" aria-label="Selected incident context">
 <section class="panel context-card"><p class="eyebrow">Selected incident</p><h2>Authorization context</h2><div id="authorization"></div></section>
@@ -40,8 +40,8 @@
 <div id="editor" hidden><h3 id="editor-title">New test plan</h3>
 <form id="plan-form"><div class="formgrid">
 <label>Operator name<input id="plan-owner" name="owner" maxlength="80" required autocomplete="name" placeholder="Your name"></label>
-<label>Source IP<input id="plan-source" name="source_ip" list="lab-sources" required placeholder="192.168.64.8"><datalist id="lab-sources"></datalist></label>
-<label>Target IP<input id="plan-target" name="target_ip" required placeholder="192.168.64.6"><small>SSH on TCP port 22</small></label>
+<label>Source IP<input id="plan-source" name="source_ip" list="lab-sources" required><datalist id="lab-sources"></datalist></label>
+<label>Target IP<input id="plan-target" name="target_ip" required><small>SSH on TCP port 22</small></label>
 <label>Permitted accounts<input id="plan-accounts" name="allowed_accounts" required value="soc_test" maxlength="520"><small>Separate names with commas</small></label>
 <label>Failed-attempt limit<input id="plan-limit" name="maximum_failed_attempts" type="number" min="1" max="100" step="1" value="10" required><small>Total across the entire window</small></label>
 <label>Start time<input id="plan-start" name="start" type="datetime-local" step="60" required></label>
@@ -72,7 +72,7 @@
 <div class="formactions"><button id="compare-prompts" class="primary">Compare original vs selected prompt</button></div><div id="comparison-results" aria-live="polite"></div>
 </section>
 <section id="pane-rules" role="tabpanel" aria-labelledby="tab-rules" hidden>
-<h3>Victim SSH rule</h3><p class="muted small">Fixed file: /etc/suricata/rules/ssh_bruteforce.rules on 192.168.64.6. Edit the message, threshold count/seconds and revision. This editor preserves TCP/22, SYN matching and SID 9001001.</p>
+<h3>Victim SSH rule</h3><p class="muted small">Fixed file: /etc/suricata/rules/ssh_bruteforce.rules on the configured Victim. Edit the message, threshold count/seconds and revision. This editor preserves TCP/22, SYN matching and SID 9001001.</p>
 <div class="formactions"><button id="read-rule">Read current rule from Victim</button></div><p id="rule-status" class="muted small">Victim status has not been checked in this session.</p>
 <label class="editor-label">Rule draft<textarea id="rule-text" rows="7" spellcheck="false" placeholder="Read the current rule first"></textarea></label>
 <div class="formactions"><button id="validate-rule">Validate on Victim</button><button id="apply-rule" class="primary" disabled>Apply validated rule and reload</button><button id="restore-rule" disabled>Restore previous rule and reload</button></div>

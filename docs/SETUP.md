@@ -4,13 +4,13 @@ For a fresh installation, follow the ordered [macOS / UTM guide](MACOS.md). This
 
 ## 1. Match the lab topology
 
-The current live demonstration expects UTM VMs named `Victim`, `Kali Linux`, and `Trust-Client` with addresses `.6`, `.4`, and `.8` on `192.168.64.0/24`. The victim SSH account is `victim`. These identities appear in bounded helpers as well as example configuration. Retargeting the lab requires reviewing code, policy and tests together.
+The original UTM lab identities are the defaults. To use alternate VM names, accounts or IPv4 addresses, configure `topology.local.json` as described in the [macOS networking setup](MACOS.md#2-create-the-guests-and-match-the-network).
 
 On the victim, SSH and Suricata must run, EVE JSON must be written to `/var/log/suricata/eve.json`, and the SSH rule with SID `9001001` must be included in the active Suricata configuration. `rules/ssh_bruteforce.rules` supplies the lab rule. Validate Suricata configuration before loading a rule. Its SYN threshold triggers collection; it does not decide whether passwords failed or whether activity is malicious.
 
 The victim account needs read access to EVE and the root-origin `ssh.service` journal records used by `ssh_auth_reader.py` (for example, approved local journal-group membership). Establish host SSH keys and trust the victim's verified host key before using batch collection. Test read access directly; do not disable host-key checking.
 
-For live enforcement, UFW must be active. The management source `.1` and victim `.6` are protected. UTM guest-agent execution must work on all three VMs; the victim agent must support the existing root-level bounded helper operations. Keep the victim running during a live block so its scheduled rollback can execute. Provisioning guest agents and VM privileges is an explicit lab setup task; local initialization does not grant access or install software in a VM.
+For live enforcement, UFW must be active. The configured Mac management source and Victim address are protected. UTM guest-agent execution must work on all three VMs; the victim agent must support the existing root-level bounded helper operations. Keep the victim running during a live block so its scheduled rollback can execute. Provisioning guest agents and VM privileges is an explicit lab setup task; local initialization does not grant access or install software in a VM.
 
 On the host, install Python 3.12+, Ollama and the base `gemma4:e4b` model. The code contacts Ollama on local port 11434. There are no Python package dependencies beyond the standard library.
 

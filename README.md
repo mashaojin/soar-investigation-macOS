@@ -6,7 +6,7 @@
 
 This is the original **Mac / UTM / Gemma4** implementation, previously named `soc-pipeline`. The separate [Windows project](https://github.com/mashaojin/soar-investigation-windows) has its own setup, platform adapters and verification limits. This README uses the same organization as that project, but all commands below describe this macOS implementation.
 
-**Suricata → Python correlation and SSH evidence → one bounded AI advisory report → report only or operator review.**
+**Suricata → Python correlation and SSH evidence → a bounded AI advisory report → report only or operator review.**
 
 Ollama with Gemma4 is the default. Google Gemini API is optional and requires separate local authorization before new incident evidence can be sent. Python collects evidence and checks the report's length and citation IDs. The operator records the final conclusion. This is an educational lab and runs without Hermes.
 
@@ -17,6 +17,7 @@ Ollama with Gemma4 is the default. Google Gemini API is optional and requires se
 - [macOS lab requirements](#macos-lab-requirements)
 - [Quick start](#quick-start)
 - [Dashboard features and settings](#dashboard-guide)
+- [MITRE ATT&CK context for SSH](#mitre-attck-context-for-ssh)
 - [Configuration and credentials](#configuration-and-credentials)
 - [Three manual scenarios](#three-manual-scenarios)
 - [Telegram decisions and live response](#telegram-decisions)
@@ -124,13 +125,13 @@ The live screenshot shows a completed historical response, so its pending approv
 | Victim | Ubuntu, SSH, Suricata/EVE, readable SSH journal, UFW and systemd |
 | Trust-Client | Ubuntu guest for approved tests and account-scope scenarios |
 | Attacker | Kali guest for the controlled unapproved scenario |
-| Network | One shared lab subnet with the exact identities below and working guest-to-guest and Mac-to-Victim access |
+| Network | One shared lab subnet with stable guest addresses and working guest-to-guest and Mac-to-Victim access |
 | Telegram | Your own bot and private chat/operator identity; exactly one poller |
 | Capacity | Enough host memory for three guests and local inference; no universal hardware minimum is qualified by CI |
 
 Python uses the standard library: there is no pip installation step. Node is used for development/CI syntax checks, not the Python dashboard. Offline tests also run on Linux. Choose guest images matching the Mac's architecture; the UTM installation and guest-network checkpoints are in the [full setup guide](docs/MACOS.md).
 
-### Fixed lab identities
+### Default lab topology
 
 | Role | UTM VM name | Guest account | IPv4 address |
 | --- | --- | --- | --- |
@@ -139,7 +140,7 @@ Python uses the standard library: there is no pip installation step. Node is use
 | Approved-test client | `Trust-Client` | `trust-client` | `192.168.64.8/24` |
 | Management | Mac host on the lab network | Your Mac account | `192.168.64.1` |
 
-The management source and Victim address are protected from response targeting. Confirm the Mac's actual SSH source as seen by Victim; do not assume every UTM installation uses these addresses. IPs, guest names, usernames and UTM transport assumptions appear in Python helpers as well as JSON. **Reproduce this exact topology or port the helpers and tests together; editing JSON alone does not retarget the lab.**
+For a different subnet or different VM names, copy `config/topology.example.json` to `topology.local.json` at the repository root. Set each guest's UTM name, username and IPv4 address. Set `management_ip` to the Mac source observed in the Victim's `SSH_CONNECTION`. The collector, evidence queries, dashboard plan editor, client staging and live response use this topology. Existing installations use the defaults above when the local file is absent. Follow the [macOS setup guide](docs/MACOS.md#2-create-the-guests-and-match-the-network) to verify routes, SSH trust and guest-agent access before running a demo.
 
 ## Quick start
 
@@ -168,7 +169,9 @@ Before continuing, verify:
 - Victim's SSH and Suricata services are active; the SSH rule SID `9001001` is loaded on the Victim-facing interface and EVE alert logging is enabled.
 - `victim` can read EVE and the root-origin SSH journal records over a trusted, noninteractive SSH connection.
 - UTM guest-agent commands execute as required and guest file-transfer receipts can be read. Live enforcement requires root guest execution on Victim.
-- The host and guests have consistent time. UFW allows ordinary SSH before any temporary response.
+- The Mac and Victim clocks are synchronized. Suricata and the SSH journal timestamp evidence on Victim, and the Mac uses those timestamps to match approved test windows and check incident freshness.
+- SSH detection works independently of the Kali and Trust-Client clocks. Use the dashboard's displayed time when starting an approved test manually. Client clocks are useful when comparing client-side logs.
+- UFW allows ordinary SSH before any temporary response.
 
 **Checkpoint:** use the concrete commands in the setup guide and inspect their results. Initialization does not create VMs, grant privileges or configure the sensor for you.
 
@@ -201,7 +204,7 @@ On the **Mac**:
 python3 stage_demo_clients.py
 ```
 
-The stager uses UTM to copy and byte-verify `ssh_demo_client.py`; it generates no test traffic. Run the route-only preflight on each client:
+The stager uses UTM to copy and byte-verify the demo client, topology module and effective topology; it generates no test traffic. Run the route-only preflight on each client:
 
 ```sh
 # Kali
@@ -215,7 +218,7 @@ python3 ~/soc-demo/ssh_demo_client.py --mode approved --preflight
 
 Verify Victim's console host-key fingerprint on each client before a test. The current demo client uses `accept-new`, which rejects changed keys but can accept a previously unknown key; pre-establish verified trust yourself. The Mac collector uses strict host-key checking.
 
-**Checkpoint:** preflight reports source `.4` for Kali and `.8` for Trust-Client, target `.6`, and `attack_executed: false`. A shared folder is optional; `/tmp` is not the installation location.
+**Checkpoint:** preflight reports the configured source for each client, the configured Victim target, and `attack_executed: false`. A shared folder is optional; `/tmp` is not the installation location.
 
 ### 5. Start the dashboard and monitor — two Mac terminals
 
@@ -274,6 +277,24 @@ First provision the fixed Victim helper using the reviewed [Mac setup procedure]
 
 Applied rules affect future sensor processing. Run fresh manual traffic to test them; historical evidence is not regenerated. See [rule editing and recovery](docs/DASHBOARD.md#4-read-validate-and-apply-a-suricata-rule).
 
+### MITRE ATT&CK context for SSH
+
+For a TCP/22 alert from SID `9001001` with at least two retained SSH failed-password records, the local retriever selects [T1110.001 Password Guessing](https://attack.mitre.org/techniques/T1110/001/) from [the curated note](knowledge/T1110.001.json). The same lookup applies to authorized tests, unapproved activity and account-scope violations because the matching behavior can occur in all three.
+
+Ollama receives the retrieved note, Suricata alert, scoped SSH journal and approved-plan findings in one bounded advisory request. The note can inform the AI’s interpretation and assessment label. Citations to supplied notes, such as `[K1]` or `[T1110.001]`, link to the official technique under **MITRE ATT&CK background**. Incident evidence and Python scope findings retain their own IDs. Authorization comes from the recorded test plan. Live response eligibility still requires the existing evidence and policy checks, a Suspicious human conclusion and separate approval to block.
+
+Retrieval is enabled for new Ollama SSH assessments. Set `"attack_retrieval": false` in `runtime.ssh.live.local.json` for an evidence-only assessment. The same evidence-only prompt is used when no note matches, the note cannot be loaded, or adding it would exceed the prompt budget. Gemini keeps its existing request and evidence scope. Saved prompt comparisons reuse the note captured with the original assessment in both arms.
+
+After updating, restart the monitor from the checkout and run a fresh bounded SSH demo. In the saved metadata, `attack_retrieval.status: included` and `assessment_knowledge` confirm that the note reached the primary prompt, even if the model omitted a citation. Older reports can show ATT&CK in a separate addendum generated after the assessment.
+
+Run the synthetic A/B evaluation from the checkout with local Ollama and `gemma4:e4b` running:
+
+```sh
+python3 verify_gemma.py --compare-retrieval
+```
+
+The evaluation holds the evidence, advisory instruction, model and options fixed for each pair and adds the note only to the retrieval arm. `verification-attack-retrieval.json` records the shared evidence hash, separate prompt hashes, model output and validated citations. Check that the approved test remains Benign, the other two cases identify their distinct scope findings, and retrieval cites the official technique without implying compromise. This evaluation uses synthetic fixtures and generates no VM traffic or response actions.
+
 ### Save, compare and activate a prompt
 
 1. Open **Settings → AI prompt**, note **Active**, choose a **Saved version** and click **Load selected version**.
@@ -307,7 +328,8 @@ To complete a requested review or optionally review a Benign report, inspect its
 
 | Local file | Purpose |
 | --- | --- |
-| `live.ssh.local.json` | EVE SSH target, log path, source/signature filters, initial cursor behavior and polling |
+| `topology.local.json` | Optional guest names, usernames, IPv4 addresses and verified Mac management IP |
+| `live.ssh.local.json` | EVE log path, signature filters, cursor behavior and polling. The topology supplies SSH target and IP filters when present. |
 | `runtime.ssh.live.local.json` | SSH evidence enrichment, authoritative plan registry and model identity |
 | `response.local.json` | Dry-run/live mode, source/target restrictions, duration, activation and approval policy |
 | `.env` | Telegram bot token and private chat/operator IDs, exported by your shell |
@@ -348,7 +370,7 @@ Run each case and verify the retained evidence, advisory report and expected rev
 
 On the dashboard choose **New test plan**. Enter:
 
-- Source `192.168.64.8`; target `192.168.64.6`; permitted account `soc_test`.
+- Use the configured Trust-Client as the source, the configured Victim as the target, and `soc_test` as the permitted account.
 - Failed-attempt limit `10`; your operator name.
 - A future 3–5 minute window, in the timezone shown by the form.
 
@@ -362,7 +384,7 @@ Wait until plan end plus 30 seconds, collection catch-up and model processing. I
 
 ### 2. Unapproved activity — Kali
 
-Confirm no approved plan covers Kali `.4` at this time. Run once on **Kali**:
+Confirm no approved plan covers the configured Kali IP at this time. Run once on **Kali**:
 
 ```sh
 python3 ~/soc-demo/ssh_demo_client.py --mode unapproved --execute
@@ -424,7 +446,7 @@ sequenceDiagram
     P->>T: Recorded response status
 ```
 
-The deny affects the source IP's access to **Victim TCP/22**, not all network traffic. It can interrupt permitted SSH tests from that same client. The `.1` management source and `.6` Victim address are protected. Keep Victim running: rollback is scheduled on Victim independently of the Mac, dashboard and Telegram. The broad SSH ALLOW rule can remain; the temporary source-specific deny is inserted ahead of it and later removed.
+The deny affects the source IP's access to **Victim TCP/22**, not all network traffic. It can interrupt permitted SSH tests from that same client. The configured management source and Victim address are protected. Before dispatch, a fresh, host-key-verified SSH connection must confirm the management source and Victim endpoint. Keep Victim running: rollback is scheduled on Victim independently of the Mac, dashboard and Telegram. The broad SSH ALLOW rule can remain; the temporary source-specific deny is inserted ahead of it and later removed.
 
 ### Manual investigation review
 

@@ -152,4 +152,5 @@ if __name__ == "__main__":
     parser.add_argument("--config", default="live.ssh.local.json")
     parser.add_argument("--db", default="ssh-live.sqlite3")
     args = parser.parse_args()
-    print(json.dumps(collect_once(json.loads(Path(args.config).read_text()), args.db), sort_keys=True))
+    from topology import collector_config
+    print(json.dumps(collect_once(collector_config(json.loads(Path(args.config).read_text())), args.db), sort_keys=True))

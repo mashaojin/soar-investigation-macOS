@@ -64,14 +64,15 @@ def recovery_batch(proof, expected):
 
 def recover(root):
     root=Path(root).resolve();db_path=root/'ssh-live.sqlite3'
-    config=json.loads((root/'live.ssh.local.json').read_text())
+    from topology import collector_config
+    config=collector_config(json.loads((root/'live.ssh.local.json').read_text()), root)
     with open(str(db_path)+'.monitor.lock','a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         with closing(sqlite3.connect(db_path)) as db:
             old=json.loads(db.execute('SELECT cursor FROM remote_checkpoints WHERE source=?',(source_key(config),)).fetchone()[0])
         request=json.dumps({'path':config['log_path'],'cursor':old})
         script=REMOTE.replace('request=json.load(sys.stdin)','request=json.loads('+repr(request)+')')
-        result=subprocess.run(['ssh','-o','BatchMode=yes','-o','ConnectTimeout=5',config['ssh_target'],'python3 -'],
+        result=subprocess.run(['ssh','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','ConnectTimeout=5',config['ssh_target'],'python3 -'],
                               input=script,text=True,capture_output=True,timeout=25)
         if result.returncode:raise RuntimeError(result.stderr[-1500:])
         proof=json.loads(result.stdout);batch,tail=recovery_batch(proof,old)

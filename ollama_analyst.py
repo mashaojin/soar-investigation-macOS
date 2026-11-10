@@ -82,7 +82,7 @@ def assessment_payload(evidence, investigation=None):
     return {'observed_facts': refs, 'policy_findings': policy}
 
 
-def make_prompt(payload, instruction=None, *, advisory=False, advisory_routing=True):
+def make_prompt(payload, instruction=None, *, advisory=False, advisory_routing=True, knowledge=None):
     from advisory_report import INSTRUCTION as ADVISORY, LEGACY_SHIPPED_PROMPT, PREVIOUS_INSTRUCTION
     if instruction is None: instruction=INSTRUCTION
     else:
@@ -100,6 +100,9 @@ def make_prompt(payload, instruction=None, *, advisory=False, advisory_routing=T
             instruction = base
         if instruction.strip() != base.strip():
             instruction = 'Investigation guidance (output instructions below take precedence):\n' + instruction + '\n' + base
+        if knowledge:
+            from attack_knowledge import context_block
+            instruction += context_block(knowledge)
         instruction += '\nEvidence:\n'
     prompt = instruction + json.dumps(payload, sort_keys=True, separators=(',', ':'))
     if len(prompt.encode()) > 16000:

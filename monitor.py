@@ -11,6 +11,7 @@ import time
 import secrets
 
 from analyst import analyze_next, recover_interrupted_analyses
+from topology import collector_config, response_config
 from live import collect_once, RemoteGap
 from response import tick
 from telegram_client import TelegramClient, TelegramError, bot_lock, load_credentials
@@ -167,10 +168,10 @@ if __name__ == "__main__":
     parser.add_argument("--telegram", action="store_true", help="Enable the single Telegram handler and configured response worker")
     parser.add_argument("--response-config", default="response.local.json")
     args = parser.parse_args()
-    config = json.loads(Path(args.config).read_text())
+    config = collector_config(json.loads(Path(args.config).read_text()))
     if not 1 <= config.get("poll_seconds", 5) <= 60:
         parser.error("poll_seconds must be between 1 and 60")
-    response_policy = json.loads(Path(args.response_config).read_text()) if args.telegram else None
+    response_policy = response_config(json.loads(Path(args.response_config).read_text())) if args.telegram else None
     if response_policy is not None and (response_policy.get("mode") not in ('dry_run','live')
                                        or response_policy.get("exclusive_polling_confirmed") is not True):
         parser.error("Telegram requires a supported response mode and confirmed exclusive polling")

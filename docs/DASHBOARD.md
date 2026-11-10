@@ -59,8 +59,8 @@ A plan authorizes a bounded failed-login test. It does not authorize successful 
 | Field | Example/meaning |
 | --- | --- |
 | Operator name | Your operator/reviewer identity, 1–80 characters |
-| Source IP | `192.168.64.8` for the configured Trust-Client |
-| Target IP | `192.168.64.6`; this editor supports SSH TCP/22 |
+| Source IP | Configured Trust-Client IP (default `192.168.64.8`) |
+| Target IP | Configured Victim IP (default `192.168.64.6`), SSH TCP/22 |
 | Permitted accounts | `soc_test`; comma-separated if several accounts are explicitly permitted, maximum eight names |
 | Failed-attempt limit | `10`, meaning the total permitted failed passwords over the whole plan window; allowed range 1–100 |
 | Start time | A future whole minute, allowing enough time to validate and approve |

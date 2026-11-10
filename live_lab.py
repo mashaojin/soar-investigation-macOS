@@ -13,14 +13,14 @@ import subprocess
 import sys
 import time
 
-from live import ssh_command
+from topology import DEFAULT, UTM, clients, load, ssh_target
 from response import canonical, prime_updates
 from telegram_client import TelegramClient, bot_lock, load_credentials
 
 
 HERE = Path(__file__).resolve().parent
 DB = HERE / "live-lab.sqlite3"
-UTM = "/Applications/UTM.app/Contents/MacOS/utmctl"
+
 
 
 def connection():
@@ -36,9 +36,12 @@ def connection():
 
 
 def live_plan(incident_id, snapshot=None):
-    plan = dict(mode="live_lab_test", source="192.168.64.4", destination="192.168.64.6",
+    topology = load()
+    plan = dict(mode="live_lab_test", source=topology["kali"]["ip"], destination=topology["victim"]["ip"],
                 port=22, protocol="tcp", duration_seconds=60, incident_id=incident_id,
-                management_ip="192.168.64.1", rollback="Ubuntu systemd timer armed before apply")
+                management_ip=topology["management_ip"], rollback="Ubuntu systemd timer armed before apply")
+    if topology != DEFAULT:
+        plan['topology'] = topology
     if snapshot is not None:
         plan['assessment_snapshot'] = snapshot
     return plan
@@ -46,6 +49,8 @@ def live_plan(incident_id, snapshot=None):
 
 def current_rehearsal_incident(incident_id, *, now=None):
     """Require a fresh, complete current-revision lab assessment, never an old pilot."""
+    topology = load()
+    kali, victim = topology['kali']['ip'], topology['victim']['ip']
     if not re.fullmatch(r'[0-9a-f]{64}', incident_id):
         raise ValueError('Expected the full current incident ID')
     with closing(sqlite3.connect(HERE / 'ssh-live.sqlite3')) as db:
@@ -61,7 +66,7 @@ def current_rehearsal_incident(incident_id, *, now=None):
     current_time = datetime.now(timezone.utc) if now is None else now
     if start <= baseline_time or not 0 <= (current_time-start).total_seconds() <= 1800:
         raise ValueError('Incident must follow the approved baseline and be under 30 minutes old')
-    if (evidence.get('source_ip'), evidence.get('destination_ip'), evidence.get('destination_port'), evidence.get('signature_id')) != ('192.168.64.4', '192.168.64.6', 22, 9001001):
+    if (evidence.get('source_ip'), evidence.get('destination_ip'), evidence.get('destination_port'), evidence.get('signature_id')) != (kali, victim, 22, 9001001):
         raise ValueError('Incident is outside the fixed Kali SSH scope')
     investigation = metadata.get('investigation', {})
     auth = investigation.get('authentication', {})
@@ -71,7 +76,7 @@ def current_rehearsal_incident(incident_id, *, now=None):
             or report.get('verdict') != 'SUSPICIOUS' or report.get('coverage') != 'observed_window'
             or auth.get('coverage') != 'observed_window' or auth.get('limited') is not False
             or any(checks.get(k) is not True for k in ('query_not_limited','retained_entry_before_start','root_service_records','window_elapsed'))
-            or auth.get('source_ip') != '192.168.64.4' or auth.get('target_ip') != '192.168.64.6'
+            or auth.get('source_ip') != kali or auth.get('target_ip') != victim
             or type(auth.get('failed_password_count')) is not int or auth['failed_password_count'] < 6
             or auth.get('successful_login_count') != 0
             or investigation.get('plan_evidence', {}).get('plan') is not None):
@@ -84,36 +89,33 @@ def digest(plan):
     return hashlib.sha256(canonical(plan).encode()).hexdigest()
 
 
-def victim_read(code):
-    config = json.loads((HERE / "live.local.json").read_text())
-    result = subprocess.run(ssh_command(config, code), capture_output=True, text=True,
-                            timeout=15, check=True)
-    return result.stdout
-
-
 def kali_probe(probe_id):
-    return client_probe(probe_id,'192.168.64.4')
+    topology = load()
+    return client_probe(probe_id, topology['kali']['ip'], topology)
 
 
-def client_probe(probe_id,source):
-    machines={'192.168.64.4':'Kali Linux','192.168.64.8':'Trust-Client'}
-    if source not in machines: raise ValueError('Unsupported lab client')
-    machine=machines[source]
+def client_probe(probe_id, source, topology=None):
+    topology = topology or load()
+    guests = clients(topology)
+    if source not in guests:
+        raise ValueError('Unsupported lab client')
+    machine = guests[source]['name']
+    victim = topology['victim']['ip']
     if not re.fullmatch(r"[0-9a-f]{24}", probe_id):
         raise ValueError("Invalid probe ID")
     path = "/run/soc-lab-probes/" + probe_id + ".json"
     code = """import json,pathlib,socket,time
 p=pathlib.Path('/run/soc-lab-probes');p.mkdir(mode=0o700,exist_ok=True)
 s=socket.socket();s.settimeout(3)
-result={'source':%r,'destination':'192.168.64.6','port':22}
+result={'source':%r,'destination':%r,'port':22}
 try:
- s.connect(('192.168.64.6',22));result.update(reachable=True,actual_source=s.getsockname()[0])
+ s.connect((result['destination'],22));result.update(reachable=True,actual_source=s.getsockname()[0])
 except OSError as e:
  result.update(reachable=False,error=type(e).__name__)
 finally:
  s.close()
 (p/'%s.json').write_text(json.dumps(result))
-""" % (source,probe_id)
+""" % (source, victim, probe_id)
     subprocess.run([UTM, "exec", machine, "--cmd", "/usr/bin/python3", "-c", code],
                    capture_output=True, timeout=10, check=True)
     # UTM exec can return before guest completion. Read a separate guest receipt.
@@ -135,6 +137,8 @@ def prepare(client, identity, incident_id=None):
         prior = db.execute("SELECT run_id,status FROM live_lab_tests ORDER BY created_at DESC LIMIT 1").fetchone()
         if prior:
             return dict(run_id=prior[0], status=prior[1], message="Existing test retained; no duplicate message sent")
+    topology = load()
+    kali, victim = topology["kali"]["ip"], topology["victim"]["ip"]
     snapshot = None
     if incident_id is not None:
         evidence, report, snapshot = current_rehearsal_incident(incident_id)
@@ -148,14 +152,14 @@ def prepare(client, identity, incident_id=None):
         raise ValueError("A verified lab incident is required")
     evidence = json.loads(row[1])
     if (evidence.get("source_ip"), evidence.get("destination_ip"), evidence.get("signature_id")) != (
-            "192.168.64.4", "192.168.64.6", 9001001):
+            kali, victim, 9001001):
         raise ValueError("Incident is outside this fixed lab test scope")
     from incident_labels import attach as attach_label,header as incident_header
     with closing(sqlite3.connect(HERE / ("ssh-live.sqlite3" if incident_id else "live.sqlite3"))) as label_db:
         label_row=label_db.execute("SELECT revision FROM incidents WHERE incident_id=?",(row[0],)).fetchone()
         incident_label=attach_label(label_db,dict(incident_id=row[0],revision=label_row[0]))
     baseline = kali_probe(secrets.token_hex(12))
-    if not baseline.get("reachable") or baseline.get("actual_source") != "192.168.64.4":
+    if not baseline.get("reachable") or baseline.get("actual_source") != kali:
         raise RuntimeError("Kali must reach Ubuntu TCP/22 before the test")
     client.check()
     prime_updates(DB, client, identity)
@@ -174,9 +178,9 @@ def prepare(client, identity, incident_id=None):
         "LIVE LAB FIREWALL TEST — ACTUAL BLOCK\n"
         f"Test: {run_id}\n"+incident_header(incident_label)
         + assessment_text +
-        "Block Kali 192.168.64.4 → Ubuntu 192.168.64.6 TCP/22 for 60 seconds.\n"
+        f"Block Kali {kali} → Ubuntu {victim} TCP/22 for 60 seconds.\n"
         "Ubuntu will arm its own rollback timer BEFORE adding the deny.\n"
-        "Mac management access from 192.168.64.1 is outside this rule.\n"
+        f"Mac management access from {plan['management_ip']} is outside this rule.\n"
         "This is a separate one-time live response using the incident already analyzed; "
         "the regular monitor remains dry-run-only.\n"
         "Tapping approval records permission; run the live helper's run command to apply it.\n"
@@ -230,10 +234,6 @@ def poll(client, identity):
     return outcomes
 
 
-def read_state(run_id):
-    return json.loads(victim_read("from pathlib import Path; print(Path(" + repr("/run/soc-lab-tests/"+run_id+"/state.json") + ").read_text())"))
-
-
 def execute(client, identity):
     poll(client, identity)
     with closing(connection()) as db, db:
@@ -254,20 +254,24 @@ def execute(client, identity):
     run_id = row["run_id"]
     result = json.loads(row["result"])
     result["pre_apply_probe"] = kali_probe(secrets.token_hex(12))
-    if not result["pre_apply_probe"].get("reachable") or result['pre_apply_probe'].get('actual_source') != '192.168.64.4':
+    if not result["pre_apply_probe"].get("reachable") or result['pre_apply_probe'].get('actual_source') != plan['source']:
         raise RuntimeError("Pre-apply connectivity is already blocked; no rule added")
     if 'assessment_snapshot' in plan:
         _, _, fresh_snapshot = current_rehearsal_incident(plan['incident_id'])
         if fresh_snapshot != plan['assessment_snapshot'] or int(time.time()) >= row['expires_at']:
             raise RuntimeError('Assessment changed or approval expired before dispatch; no block added')
-    source = (HERE / "live_lab_guard.py").read_text()
-    # One dispatch only; an empty UTM result is handled through a separate receipt.
-    subprocess.run([UTM, "exec", "Victim", "--cmd", "/usr/bin/python3", "-c", source, run_id],
-                   capture_output=True, timeout=15, check=True)
+    from live_response import LabExecutor, verify_receipt
+    topology = load()
+    if live_plan(plan['incident_id'], snapshot) != plan:
+        raise RuntimeError('Topology changed before dispatch')
+    executor = LabExecutor(plan['source'], topology)
+    executor.management()
+    executor.dispatch(run_id)
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
         try:
-            state = read_state(run_id)
+            state = executor.read(run_id)
+            verify_receipt(state, run_id, plan["source"], plan["destination"])
             if state["stage"] == "applied":
                 result["applied_state"] = state
                 break
@@ -279,10 +283,11 @@ def execute(client, identity):
     else:
         raise RuntimeError("No apply receipt; do not re-dispatch. Inspect guest rollback state.")
     result["blocked_probe"] = kali_probe(secrets.token_hex(12))
-    result["management_check"] = victim_read("import os,json; print(json.dumps({'connection':os.environ.get('SSH_CONNECTION'),'reachable':True}))").strip()
+    result["management_check"] = canonical(executor.management())
     deadline = time.monotonic() + 90
     while time.monotonic() < deadline:
-        state = read_state(run_id)
+        state = executor.read(run_id)
+        verify_receipt(state, run_id, plan["source"], plan["destination"])
         if state["stage"] == "rolled_back":
             result["rollback_state"] = state
             break
@@ -292,7 +297,7 @@ def execute(client, identity):
         raise RuntimeError("Rollback was not confirmed; operator recovery required")
     result["recovery_probe"] = kali_probe(secrets.token_hex(12))
     result["passed"] = (not result["blocked_probe"]["reachable"] and result["recovery_probe"]["reachable"]
-                        and result['recovery_probe'].get('actual_source') == '192.168.64.4'
+                        and result['recovery_probe'].get('actual_source') == plan['source']
                         and json.loads(result['management_check']).get('reachable') is True)
     result["run_id"] = run_id
     with closing(connection()) as db, db:

@@ -19,7 +19,8 @@ class RuleEditor:
     def remote(self,request):
         if not (self.root/'rule-editor-enabled.json').exists():
             raise ValueError('Victim rule helper is not provisioned for this dashboard root.')
-        result=subprocess.run(['ssh','-o','BatchMode=yes','-o','ConnectTimeout=5','victim@192.168.64.6',
+        from topology import load, ssh_target
+        result=subprocess.run(['ssh','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','ConnectTimeout=5',ssh_target(load(self.root)),
             'sudo -n /usr/bin/python3 /usr/local/libexec/soc-rule-editor.py'],
             input=encode(request),capture_output=True,text=True,timeout=150)
         if result.returncode: raise RuntimeError('Victim helper unavailable: '+result.stderr[-1000:])

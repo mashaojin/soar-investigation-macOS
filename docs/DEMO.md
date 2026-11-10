@@ -10,7 +10,7 @@ Create `~/soc-demo` in both client VMs, then run on the Mac:
 python3 stage_demo_clients.py
 ```
 
-This copies and verifies `ssh_demo_client.py`; it generates no traffic. Alternatively copy this file manually to `~/soc-demo/ssh_demo_client.py` on each client.
+This copies and verifies the demo client and its topology files. It generates no traffic.
 
 On Trust-Client:
 
@@ -28,7 +28,7 @@ Check that source addresses are `.8` and `.4`. Use the bounded demo only against
 
 ## 1. Approved test
 
-In the dashboard, select **New test plan**. Enter source `192.168.64.8`, target `192.168.64.6`, allowed account `soc_test`, attempt limit `10`, your operator name and a fresh future window lasting 3–5 minutes. Select **Validate**, inspect the scope and timezone, then **Approve plan**.
+In the dashboard, select **New test plan**. Use the configured trusted-client IP as the source, the configured Victim IP as the target, allowed account `soc_test`, attempt limit `10`, your operator name and a fresh future window lasting 3–5 minutes. Select **Validate**, inspect the scope and timezone, then **Approve plan**.
 
 During the approved window, run once on Trust-Client:
 
@@ -51,6 +51,7 @@ The model weighs observed failures, lack of authorization and other retained evi
 In live mode, from Kali start this connectivity observation around approval time:
 
 ```sh
+# Substitute the configured Victim IP if it differs from the default.
 for i in $(seq 1 20); do date +%T; nc -nvz -w 2 192.168.64.6 22; sleep 3; done
 ```
 

@@ -93,6 +93,20 @@ else{for(const [index,call] of trace.entries()){$('tools').append(factCard('hist
 const comparison=v.authorization?.scope_comparison;if(comparison&&Object.keys(comparison).length)$('policy-findings').append(factCard('historical-policy','Recorded Python scope comparison',comparison,'Historical findings retained with this incident.'));
 else $('policy-findings').append(node('p','No deterministic findings recorded yet.','muted small'));}
 if(!facts&&!trace.length)$('tools').append(node('p','No scoped authentication evidence recorded yet.','muted small'));
+const attack=report?.attack_context;
+const attackSources=report?.knowledge_refs||attack?.sources||[];
+$('attack-background').hidden=!attackSources.length;
+$('attack-background-body').replaceChildren();
+if(attackSources.length){
+  const references=node('ul');
+  for(const source of attackSources){
+    const link=node('a',source.ref+' · '+source.technique_id+' '+source.name);
+    link.href=source.url;link.target='_blank';link.rel='noopener noreferrer';
+    const item=node('li');item.append(link);references.append(item);
+  }
+  if(attack?.text)$('attack-background-body').append(node('p',attack.text));
+  $('attack-background-body').append(references);
+}
 const refBox=node('div',undefined,'assessment-references');
 if(report?.evidence_refs?.length){refBox.append(node('span','AI-cited references: '));for(const id of report.evidence_refs){const link=node('a',id);link.href='#evidence-'+id;refBox.append(link,document.createTextNode(' '));}const dependencies=(report.resolved_evidence_refs||[]).filter(id=>!report.evidence_refs.includes(id));if(dependencies.length){refBox.append(node('span',' · Python-linked sources: '));for(const id of dependencies){const link=node('a',id);link.href='#evidence-'+id;refBox.append(link,document.createTextNode(' '));}}refBox.append(node('p',report.reference_limit||'References identify supplied evidence; they do not verify every prose claim.','muted small'));}
 else if(report?.format==='advisory_text')refBox.append(node('p','Cited IDs: '+(report.evidence_refs.join(', ')||'None'),'muted small'));
@@ -154,7 +168,7 @@ function openPlans(){if(!$('plan-drawer').open)$('plan-drawer').showModal();docu
 function closePlans(){if($('plan-drawer').open)$('plan-drawer').close();}
 function openEditor(plan){if(busy)return;if(!data?.editor_options){openPlans();message('Plan configuration is unavailable. Refresh and try again.',true);return;}
 openPlans();$('editor').hidden=false;$('plan-success').hidden=true;$('editor-title').textContent=plan?'Repeat as a new test plan':'New test plan';
-fillFields({owner:plan?.owner||$('plan-owner').value||'',source_ip:plan?.source_ips?.[0]||(data.editor_options.source_ips.includes('192.168.64.8')?'192.168.64.8':data.editor_options.source_ips[0]),target_ip:plan?.target_ip||data.editor_options.target_ip,allowed_accounts:plan?.allowed_accounts?.join(', ')||'soc_test',maximum_failed_attempts:plan?.maximum_failed_attempts||10});freshTimes(plan?.end);$('editor').scrollIntoView({block:'start'});$('plan-owner').focus();}
+fillFields({owner:plan?.owner||$('plan-owner').value||'',source_ip:plan?.source_ips?.[0]||(data.editor_options.source_ips.includes(data.editor_options.preferred_source_ip)?data.editor_options.preferred_source_ip:data.editor_options.source_ips[0]),target_ip:plan?.target_ip||data.editor_options.target_ip,allowed_accounts:plan?.allowed_accounts?.join(', ')||'soc_test',maximum_failed_attempts:plan?.maximum_failed_attempts||10});freshTimes(plan?.end);$('editor').scrollIntoView({block:'start'});$('plan-owner').focus();}
 function setBusy(value){busy=value;for(const el of $('plan-form').elements)el.disabled=value;$('new-plan').disabled=value;$('drawer-new-plan').disabled=value;$('approve-plan').disabled=value||!review;}
 function formValues(){const raw=rawFields();return {...raw,maximum_failed_attempts:Number(raw.maximum_failed_attempts),start:new Date(raw.start).toISOString(),end:new Date(raw.end).toISOString()};}
 async function post(path,body){if(!data?.csrf_token)throw new Error('Dashboard is reconnecting. Refresh and try again.');const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-SOAR-CSRF':data.csrf_token},body:JSON.stringify(body)});const result=await response.json().catch(()=>({error:'Request rejected. Refresh the dashboard and try again.'}));if(!response.ok)throw new Error(result.error||'Plan request failed.');return result;}

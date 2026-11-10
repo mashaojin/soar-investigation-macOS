@@ -9,6 +9,7 @@ from approved_plans import select_plan
 from ssh_live_investigation import incident_context
 from ssh_correlation import scope, recorded_plan, ready_at
 from ssh_scenarios import timestamp
+from topology import DEFAULT, clients
 
 
 def document_key(plan):
@@ -18,19 +19,19 @@ def document_key(plan):
     return hashlib.sha256((str(Path(path).resolve())+'\0'+digest).encode()).hexdigest()[:32]
 
 
-def plan_view(plan, now=None):
+def plan_view(plan, now=None, topology=DEFAULT):
     now=now or datetime.now(timezone.utc)
     result=dict(plan)
     start,end=timestamp(plan['start']),timestamp(plan['end'])
     result['timing']='upcoming' if now<start else 'active' if now<end else 'expired'
     source=plan['source_ips'][0]
     command=None
-    if (plan['approval_status']=='approved' and source=='192.168.64.8'
-            and plan['target_ip']=='192.168.64.6' and plan['target_port']==22
+    if (plan['approval_status']=='approved' and source==topology['trusted']['ip']
+            and plan['target_ip']==topology['victim']['ip'] and plan['target_port']==22
             and set(plan['allowed_accounts'])=={'soc_test'} and plan['maximum_failed_attempts']>=6):
         command='python3 ~/soc-demo/ssh_demo_client.py --mode approved --execute'
     result['run_instructions']={
-        'vm':{'192.168.64.8':'Trust-Client Ubuntu','192.168.64.4':'Kali Linux'}.get(source,'Source VM'),
+        'vm':clients(topology).get(source, {}).get('name', 'Source VM'),
         'command':command, 'start':plan['start'],'end':plan['end'],
         'waiting_until':(end+timedelta(seconds=30)).isoformat(),
         'scope_note':'Run once within the permitted window. Use only the listed accounts and stay within the total attempt limit.',

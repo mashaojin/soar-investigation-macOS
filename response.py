@@ -13,6 +13,7 @@ import secrets
 import sqlite3
 import time
 
+from topology import DEFAULT, clients, response_config
 from telegram_client import TelegramClient, TelegramError, bot_lock, load_credentials
 from assessment_facts import VERSION
 from report_language import present_report
@@ -80,13 +81,17 @@ def plan_for(evidence, policy):
     duration = policy["duration_seconds"]
     if type(duration) is not int or not 1 <= duration <= 3600:
         raise ValueError("Invalid proposed block duration")
-    if policy['mode']=='live' and (source not in ('192.168.64.4','192.168.64.8') or destination!='192.168.64.6' or duration!=60):
+    topology = policy.get('_topology', DEFAULT)
+    if policy['mode']=='live' and (source not in clients(topology) or destination!=topology['victim']['ip'] or duration!=60):
         raise ValueError('Live guard supports only the explicitly allowed SSH lab clients and 60-second rollback')
     rule = ["deny", "from", source, "to", destination, "port", "22", "proto", "tcp"]
-    return {"mode": policy['mode'], "source_ip": source, "destination_ip": destination,
+    plan = {"mode": policy['mode'], "source_ip": source, "destination_ip": destination,
             "port": 22, "protocol": "tcp", "duration_seconds": duration,
             "apply_argv": ["sudo", "-n", "/usr/sbin/ufw", "insert", "1"] + rule,
             "rollback_argv": ["sudo", "-n", "/usr/sbin/ufw", "--force", "delete"] + rule}
+    if policy["mode"] == "live" and "_topology" in policy:
+        plan["topology"] = topology
+    return plan
 
 
 def bound_plan(evidence, report, metadata, policy, now):
@@ -603,7 +608,7 @@ if __name__ == "__main__":
     parser.add_argument("--db", default="ssh-live.sqlite3")
     parser.add_argument("--check", action="store_true", help="Check Telegram identity only; no messages or polling")
     args = parser.parse_args()
-    policy = json.loads(Path(args.config).read_text())
+    policy = response_config(json.loads(Path(args.config).read_text()))
     credentials = load_credentials(policy)
     client = TelegramClient(credentials)
     if args.check:

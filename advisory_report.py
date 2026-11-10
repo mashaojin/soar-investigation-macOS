@@ -40,7 +40,7 @@ def is_report_only(analysis_status, report):
     return analysis_status == 'complete' and assessment_label(report) == 'BENIGN'
 
 
-def validate(text, payload):
+def validate(text, payload, *, knowledge=None):
     if not isinstance(text, str) or not text.strip() or len(text.encode()) > MAX_REPORT_BYTES:
         raise ValueError('Advisory report must contain 1–4096 UTF-8 bytes of text')
     available = payload['observed_facts'].keys() | payload['policy_findings'].keys()
@@ -51,4 +51,16 @@ def validate(text, payload):
             raise ValueError(f'Advisory report cites unknown evidence ID {identifier}')
         if identifier not in references:
             references.append(identifier)
-    return dict(format=FORMAT, reason=text.strip(), evidence_refs=references)
+    report = dict(format=FORMAT, reason=text.strip(), evidence_refs=references)
+    knowledge = knowledge or {}
+    techniques = {note['technique_id']: ref for ref, note in knowledge.items()}
+    citations = {}
+    for citation in re.findall(r'\b(?:K\d+|T\d{4}(?:\.\d{3})?)\b', text, flags=re.IGNORECASE):
+        identifier = citation.upper()
+        ref = techniques.get(identifier, identifier)
+        if ref not in knowledge:
+            raise ValueError(f'Advisory report cites unknown ATT&CK reference {identifier}')
+        citations[ref] = dict(knowledge[ref], ref=ref)
+    if citations:
+        report['knowledge_refs'] = list(citations.values())
+    return report

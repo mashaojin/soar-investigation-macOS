@@ -1,4 +1,5 @@
 """Root guest helper for ONE allowlisted 60-second client-to-Ubuntu SSH lab test."""
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -24,12 +25,13 @@ state = json.loads((folder / 'state.json').read_text())
 for attempt in range(3):
     try:
         before = command(['/usr/sbin/ufw', 'status', 'numbered'])
-        matches = [line for line in before.splitlines() if line.endswith('# ' + tag)]
+        matches = [line.strip() for line in before.splitlines() if line.strip().endswith('# ' + tag)]
         if len(matches) > 1:
             raise RuntimeError('Ambiguous tagged rule; manual recovery required')
         if matches:
             line = matches[0]
-            if state['source'] not in ('192.168.64.4','192.168.64.8') or state['source'] not in line or '192.168.64.6' not in line or '22/tcp' not in line:
+            scope = r'^\[\s*\d+\]\s+' + re.escape(state['destination']) + r'\s+22/tcp' + r'\s+DENY IN\s+' + re.escape(state['source']) + r'\s+# ' + re.escape(tag) + r'$'
+            if not re.fullmatch(scope, line):
                 raise RuntimeError('Tagged rule does not match the lab scope')
             number = re.match(r'^\[\s*(\d+)\]', line).group(1)
             command(['/usr/sbin/ufw', '--force', 'delete', number])
@@ -49,9 +51,14 @@ sys.exit(1)
 
 def main():
     run_id = sys.argv[1]
-    source = sys.argv[2] if len(sys.argv)>2 else '192.168.64.4'
-    if source not in ('192.168.64.4','192.168.64.8'):
-        raise ValueError('Unsupported lab source')
+    source = sys.argv[2]
+    topology = json.loads(sys.argv[3])
+    destination = topology['victim']['ip']
+    clients = {topology[role]['ip'] for role in ('kali', 'trusted')}
+    addresses = clients | {destination, topology['management_ip']}
+    if (len(addresses) != 4 or source not in clients
+            or any(str(ipaddress.IPv4Address(address)) != address for address in addresses)):
+        raise ValueError('Unsupported lab source or topology')
     if not re.fullmatch(r"[0-9a-f]{24}", run_id) or os.geteuid() != 0:
         raise RuntimeError("Root execution and a valid lab test ID are required")
     folder = Path("/run/soc-lab-tests")
@@ -63,7 +70,7 @@ def main():
     tag = "soc-lab-" + run_id
     unit = tag + "-rollback"
     state = dict(stage="preflight", run_id=run_id, tag=tag, timer_unit=unit + ".timer",
-                 source=source, destination="192.168.64.6", port=22, duration_seconds=60)
+                 source=source, destination=destination, port=22, duration_seconds=60)
     def save():
         temporary = folder / "state.tmp"
         temporary.write_text(json.dumps(state))
@@ -74,8 +81,8 @@ def main():
     save()
     try:
         interfaces = json.loads(command([shutil.which("ip") or "/usr/sbin/ip", "-j", "address", "show"]))
-        if not any(a.get("local") == "192.168.64.6" for interface in interfaces for a in interface.get("addr_info", [])):
-            raise RuntimeError("This helper must run on the Ubuntu victim 192.168.64.6")
+        if not any(a.get("local") == destination for interface in interfaces for a in interface.get("addr_info", [])):
+            raise RuntimeError("This helper must run on the configured Ubuntu victim")
         before = command(["/usr/sbin/ufw", "status", "numbered"])
         if not before.startswith("Status: active"):
             raise RuntimeError("UFW must already be active")
@@ -99,7 +106,7 @@ def main():
         state.update(stage="armed", timer_armed_at=armed_epoch, rollback_due_at=armed_epoch+60)
         save()
         command(["/usr/sbin/ufw", "insert", "1", "deny", "from", source,
-                 "to", "192.168.64.6", "port", "22", "proto", "tcp", "comment", tag])
+                 "to", destination, "port", "22", "proto", "tcp", "comment", tag])
         after = command(["/usr/sbin/ufw", "status", "numbered"])
         if tag not in after:
             raise RuntimeError("Tagged deny rule was not found")

@@ -7,15 +7,17 @@ import subprocess
 import tempfile
 import time
 
-TARGET='192.168.64.6'
+from topology import load
 
 def run(mode, preflight=False):
-    expected='192.168.64.4' if mode=='unapproved' else '192.168.64.8'
-    route=json.loads(subprocess.check_output(['ip','-j','route','get',TARGET],text=True,timeout=5))[0]
+    topology = load()
+    target = topology['victim']['ip']
+    expected = topology['kali' if mode=='unapproved' else 'trusted']['ip']
+    route=json.loads(subprocess.check_output(['ip','-j','route','get',target],text=True,timeout=5))[0]
     if route.get('prefsrc') != expected:
         raise ValueError(f'This mode requires source {expected}; route reports {route.get("prefsrc")}')
     if preflight:
-        result={'source_ip':expected,'target_ip':TARGET,'route':route,'attack_executed':False}
+        result={'source_ip':expected,'target_ip':target,'route':route,'attack_executed':False}
         Path('/tmp/soar-client-preflight.json').write_text(json.dumps(result))
         print(json.dumps(result));return
     accounts=['soc_test']*6 if mode=='approved' else ['soc_rehearsal_invalid']*6
@@ -33,8 +35,8 @@ def run(mode, preflight=False):
                 time.sleep(12)
             command=['ssh','-o','ConnectTimeout=3','-o','ConnectionAttempts=1',
                      '-o','PreferredAuthentications=password','-o','PubkeyAuthentication=no',
-                     '-o','NumberOfPasswordPrompts=1','-o','StrictHostKeyChecking=accept-new',
-                     '-o','ControlMaster=no','-o','ControlPath=none',account+'@'+TARGET,'true']
+                     '-o','NumberOfPasswordPrompts=1','-o','StrictHostKeyChecking=yes',
+                     '-o','ControlMaster=no','-o','ControlPath=none',account+'@'+target,'true']
             try:
                 result=subprocess.run(command,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,
                                       stderr=subprocess.PIPE,env=env,start_new_session=True,text=True,timeout=4)
@@ -44,7 +46,7 @@ def run(mode, preflight=False):
             except subprocess.TimeoutExpired:
                 results.append({'account':account,'timeout':True})
             time.sleep(.2)
-    print(json.dumps({'mode':mode,'source_ip':expected,'target_ip':TARGET,'attempts':results,
+    print(json.dumps({'mode':mode,'source_ip':expected,'target_ip':target,'attempts':results,
                       'note':'Failed-password counts must be verified from victim logs; SSH protections may reject connections early.'},indent=2))
 
 if __name__=='__main__':

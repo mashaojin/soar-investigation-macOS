@@ -1,0 +1,18 @@
+{
+  "victim": {
+    "name": "Victim",
+    "user": "victim",
+    "ip": "192.168.64.6"
+  },
+  "kali": {
+    "name": "Kali Linux",
+    "user": "kali",
+    "ip": "192.168.64.4"
+  },
+  "trusted": {
+    "name": "Trust-Client",
+    "user": "trust-client",
+    "ip": "192.168.64.8"
+  },
+  "management_ip": "192.168.64.1"
+}
